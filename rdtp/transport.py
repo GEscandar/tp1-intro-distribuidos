@@ -5,7 +5,6 @@ import sys
 from dataclasses import dataclass, astuple
 from typing import Union, Tuple
 from rdtp.exceptions import ConnectionError
-from asyncio import DatagramTransport
 
 MAX_RETRIES = 10
 READ_TIMEOUT = 10.0
