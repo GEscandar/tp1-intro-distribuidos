@@ -7,7 +7,7 @@ from typing import Union, Tuple
 from rdtp.exceptions import ConnectionError
 
 MAX_RETRIES = 10
-READ_TIMEOUT = 10.0
+READ_TIMEOUT = 5.0
 DEFAULT_TIMEOUT = 2
 
 __all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
@@ -70,12 +70,20 @@ class RDTSegment:
 class RDTTransport:
     """Base class for RDTP transport implementations"""
 
-    def __init__(self, sock: socket.socket = None, timeout: float = None) -> None:
+    def __init__(
+        self,
+        sock: socket.socket = None,
+        sock_timeout: float = None,
+        read_timeout: float = READ_TIMEOUT,
+    ) -> None:
         if not sock:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        if timeout is not None:
-            sock.settimeout(timeout)
+        if sock_timeout is not None:
+            sock.settimeout(sock_timeout)
+        if read_timeout is None:
+            raise ValueError("read_timeout cannot be None")
         self.sock = sock
+        self.read_timeout = read_timeout
         self.seq = 0
         self.ack = 0
 
@@ -91,54 +99,7 @@ class RDTTransport:
         ack = ack or self.ack
         return RDTSegment(data=data, seq=seq, ack=ack)
 
-    def read(self, bufsize: int, wait=True):
-        message, client_address = (None, None)
-        ready = select.select([self.sock], [], [], READ_TIMEOUT if wait else 0)
-        if ready[0]:
-            message, client_address = self.sock.recvfrom(
-                bufsize + RDTSegment.HEADER_SIZE
-            )
-        elif wait:
-            raise TimeoutError
-
-        return message, client_address
-
-    def receive(self, bufsize, max_retries=MAX_RETRIES):
-        """
-        Receive data through the socket, stripping the headers.
-        Emits the corresponding ACK to the sending end.
-        """
-        pkt, addr = None, None
-
-        for i in range(max_retries + 1):
-            try:
-                data, addr = self.read(bufsize)
-                pkt = RDTSegment.unpack(data)
-                addr = sockaddr(*addr)
-            except TimeoutError:
-                if i == max_retries:
-                    raise ConnectionError("Connection lost")
-                logging.debug("got timeout receiving. retrying")
-                continue
-
-            if pkt.seq == self.ack:
-                # if pkt.data:
-                # got a non-empty data packet, send ack
-                self.ack += len(pkt.data)
-                ack_pkt = self._create_segment()
-                logging.debug(f"got package. sending ACK. pkt=[{ack_pkt}]")
-                print(f"got package. sending ACK to {addr}. pkt=[{ack_pkt}]")
-                self.send(ack_pkt, addr)
-                break
-
-            logging.debug(f"Expecting remote seq={self.ack}. Got pkt=[{pkt}]")
-
-            if pkt.seq < self.ack:
-                # retransmission, resend ack
-                self.send(self._create_segment(), addr)
-        return pkt.data
-
-    def send(self, segment: RDTSegment, address: sockaddr) -> int:
+    def _send(self, segment: RDTSegment, address: sockaddr) -> int:
         """Try to send the RDT segment to the server at ```address```.
         This is only meant to be called by implementations of this class.
 
@@ -167,6 +128,58 @@ class RDTTransport:
             self.seq += data_len
         return bytes_sent
 
+    def _ack(self, pkt: RDTSegment, addr: sockaddr):
+        if pkt.seq == self.ack:
+            if pkt.data:
+                # got a non-empty data packet, send ack
+                self.ack += len(pkt.data)
+                ack_pkt = self._create_segment()
+                logging.debug(f"got package. sending ACK. pkt=[{ack_pkt}]")
+                print(f"got package. sending ACK to {addr}. pkt=[{ack_pkt}]")
+                self._send(ack_pkt, addr)
+        elif pkt.seq < self.ack:
+            # retransmission, resend ack
+            self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
+
+    def read(self, bufsize: int):
+        ready = select.select(
+            [self.sock],
+            [],
+            [],
+            self.read_timeout,
+        )
+        if ready[0]:
+            message, client_address = self.sock.recvfrom(
+                bufsize + RDTSegment.HEADER_SIZE
+            )
+            return message, client_address
+        raise TimeoutError
+
+    # def receive(self, bufsize, max_retries=MAX_RETRIES):
+    #     """
+    #     Receive data through the socket, stripping the headers.
+    #     Emits the corresponding ACK to the sending end.
+    #     """
+    #     pkt, addr = None, None
+
+    #     for i in range(max_retries + 1):
+    #         try:
+    #             data, addr = self.read(bufsize)
+    #             pkt = RDTSegment.unpack(data)
+    #             addr = sockaddr(*addr)
+    #         except TimeoutError:
+    #             if i == max_retries:
+    #                 raise ConnectionError("Connection lost")
+    #             logging.debug("got timeout receiving. retrying")
+    #             continue
+
+    #         logging.debug(f"Expecting remote seq={self.ack}. Got pkt=[{pkt}]")
+
+    #         self._ack(pkt, addr)
+    #         if pkt.seq == self.ack:
+    #             break
+    #     return pkt.data
+
     def close(self, wait=False):
         # Wait for resends due to lost outgoing acks
         # for i in range(MAX_RETRIES + 1):
@@ -187,17 +200,13 @@ class RDTTransport:
 
 
 class StopAndWaitTransport(RDTTransport):
-    def __init__(
-        self, sock: socket.socket = None, timeout: float = DEFAULT_TIMEOUT
-    ) -> None:
-        super().__init__(sock, timeout)
 
     def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
         seq = self.seq
         ack = self.ack
         for _ in range(max_retries + 1):
             try:
-                super().send(
+                self._send(
                     self._create_segment(data, seq, ack),
                     address,
                 )
@@ -210,7 +219,7 @@ class StopAndWaitTransport(RDTTransport):
                 if ack_segment.ack != self.seq:
                     continue
                 self.ack = ack_segment.ack
-                return
+                return ack_bytes
             except TimeoutError:
                 continue
         raise ConnectionError("Connection lost")
