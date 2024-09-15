@@ -4,15 +4,11 @@ from typing import Optional
 from .transport import *
 from .server import Server
 from .exceptions import *
+from .operations import run_operation, UploadOperation
 
 
 def common_options(f):
     options = [
-        click.option(
-            "-l",
-            "--location",
-            help="IPv4 Address of the rdtp server.",
-        ),
         click.option(
             "-v",
             "--verbose",
@@ -20,17 +16,34 @@ def common_options(f):
             help=("Emit messages about ongoing file transfer operations"),
         ),
         click.option(
-            "-w",
-            "--workers",
-            type=click.IntRange(min=1),
-            default=None,
-            help=(
-                "When rdtp uploads or downloads a large file, it may use a process pool to"
-                " speed up processing. This option controls the number of parallel workers."
-                " This can also be specified via the RDTP_NUM_WORKERS environment variable."
-                " Defaults to the number of CPUs in the system."
-            ),
+            "-q",
+            "--quiet",
+            is_flag=True,
+            help=("decrease output verbosity"),
         ),
+        click.option(
+            "-H",
+            "--host",
+            help=("server IP address"),
+        ),
+        click.option(
+            "-p",
+            "--port",
+            type=int,
+            help=("server port"),
+        ),
+        # click.option(
+        #     "-w",
+        #     "--workers",
+        #     type=click.IntRange(min=1),
+        #     default=None,
+        #     help=(
+        #         "When rdtp uploads or downloads a large file, it may use a process pool to"
+        #         " speed up processing. This option controls the number of parallel workers."
+        #         " This can also be specified via the RDTP_NUM_WORKERS environment variable."
+        #         " Defaults to the number of CPUs in the system."
+        #     ),
+        # ),
     ]
     return functools.reduce(lambda x, opt: opt(x), options, f)
 
@@ -51,26 +64,24 @@ def main(
     help="Upload a file to an rdtp server.",
 )
 @click.option(
-    "-f",
-    "--file",
+    "-s",
+    "--src",
     type=click.Path(
         exists=True, file_okay=True, dir_okay=True, readable=True, path_type=str
     ),
-    help="Path of the file to send.",
+    help="source file path",
+)
+@click.option(
+    "-n",
+    "--name",
+    help="file name",
 )
 @common_options
 @click.pass_context
 def upload(
-    ctx: click.Context,
-    file: str,
-    location: str,
-    verbose: bool,
-    workers: Optional[int],
+    ctx: click.Context, src: str, name: str, verbose: bool, host: str, port: int
 ):
-    print(location)
-    print(verbose)
-    print(file)
-    # rdtp_upload(file, location, workers=workers)
+    run_operation(UploadOperation.opcode, src, host, port, name)
 
 
 if __name__ == "__main__":

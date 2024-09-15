@@ -128,7 +128,16 @@ class RDTTransport:
             self.seq += data_len
         return bytes_sent
 
+    def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
+        raise NotImplementedError
+
     def _ack(self, pkt: RDTSegment, addr: sockaddr):
+        """Send an acknowledgement for the received packet
+
+        Args:
+            pkt (RDTSegment): The received packet
+            addr (sockaddr): Peer address
+        """
         if pkt.seq == self.ack:
             if pkt.data:
                 # got a non-empty data packet, send ack
