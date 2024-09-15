@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Union
 from rdtp import sockaddr, RDTTransport, StopAndWaitTransport
 
+UPLOAD_CHUNK_SIZE = 1024
+
 
 class DownloadOperation:
     opcode = b"d"
@@ -72,10 +74,13 @@ class UploadOperation:
     def handle(self, addr: sockaddr):
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr)
-        # upload the file line by line
-        with open(self.filepath) as file:
-            for line in file:
-                self.transport.send(line.encode(), addr)
+        # upload the file in chunks of size UPLOAD_CHUNK_SIZE
+        bytes_read = 0
+        with open(self.filepath, "rb") as file:
+            while bytes_read < self.file_size:
+                content = file.read(min(UPLOAD_CHUNK_SIZE, self.file_size))
+                bytes_read += len(content)
+                self.transport.send(content, addr)
 
 
 operations = {UploadOperation.opcode: UploadOperation}
