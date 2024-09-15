@@ -76,9 +76,10 @@ class UploadOperation:
         self.transport.send(self.get_op_metadata(), addr)
         # upload the file in chunks of size UPLOAD_CHUNK_SIZE
         bytes_read = 0
+        chunk_size = min(UPLOAD_CHUNK_SIZE, self.file_size)
         with open(self.filepath, "rb") as file:
             while bytes_read < self.file_size:
-                content = file.read(min(UPLOAD_CHUNK_SIZE, self.file_size))
+                content = file.read(chunk_size)
                 bytes_read += len(content)
                 self.transport.send(content, addr)
 
