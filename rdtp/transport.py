@@ -35,24 +35,20 @@ class RDTSegment:
 
     def __init__(self, data: bytes = bytes(), seq: int = 0, ack: int = 0):
         self.data = data
-        # self.len_data = len(data)
         self.seq = seq
         self.ack = ack
 
     @staticmethod
     def unpack(data: bytes):
         seq = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
-        data = data[RDTSegment.SEQ_SIZE :]
-
-        ack = int.from_bytes(data[:1], byteorder=sys.byteorder)
-        data = data[1:]
+        ack = int.from_bytes(data[RDTSegment.SEQ_SIZE:RDTSegment.HEADER_SIZE], byteorder=sys.byteorder)
+        data = data[RDTSegment.HEADER_SIZE::]
 
         return RDTSegment(data, seq, ack)
 
     def to_bytes(self):
         res = self.seq.to_bytes(RDTSegment.SEQ_SIZE, byteorder=sys.byteorder)
         res += self.ack.to_bytes(1, byteorder=sys.byteorder)
-        # res += self.len_data.to_bytes(4, byteorder=sys.byteorder)
         res += self.data
         return res
 
@@ -101,15 +97,12 @@ class RDTTransport:
         ack = ack or self.ack
         return RDTSegment(data=data, seq=seq, ack=ack)
 
-
     def send_all(self, data: bytes, amount: int, address: sockaddr):
         bytes_sent = 0
         while (bytes_sent < amount):
             bytes_sent += self.sock.sendto(data[bytes_sent:], address)
             print("paso por el loop")
         return bytes_sent
-
-
 
     def _send(self, segment: RDTSegment, address: sockaddr) -> int:
         """Try to send the RDT segment to the server at ```address```.
@@ -154,6 +147,15 @@ class RDTTransport:
             # retransmission, resend ack
             self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
 
+
+    def recv_segment(self, bufsize: int):
+        message, client_address = self.sock.recvfrom(
+            bufsize + RDTSegment.HEADER_SIZE
+        )
+        segment = RDTSegment.unpack(message)
+        print(f"segment: {segment}")
+        return segment, client_address
+
     def read(self, bufsize: int):
         ready = select.select(
             [self.sock],
@@ -162,10 +164,8 @@ class RDTTransport:
             self.read_timeout,
         )
         if ready[0]:
-            message, client_address = self.sock.recvfrom(
-                bufsize + RDTSegment.HEADER_SIZE
-            )
-            return message, client_address
+            segment, client_address = self.recv_segment(bufsize)
+            return segment, client_address
         raise TimeoutError
 
     # def receive(self, bufsize, max_retries=MAX_RETRIES):
@@ -224,8 +224,7 @@ class StopAndWaitTransport(RDTTransport):
                     self._create_segment(data, seq, ack),
                     address,
                 )
-                ack_bytes, _ = self.read(1024)
-                ack_segment = RDTSegment.unpack(ack_bytes)
+                ack_segment, _ = self.read(1024)
                 logging.debug(
                     f"Received ack: {ack_segment.ack}, expected ack={self.seq}"
                 )

@@ -22,7 +22,7 @@ class Server:
                     data, addr = self.transport.read(2048)
                     if addr not in self.clients:
                         self.clients[addr] = StopAndWaitTransport()
-                    self.clients[addr]._ack(RDTSegment.unpack(data), sockaddr(*addr))
+                    self.clients[addr]._ack(data, sockaddr(*addr))
                 except TimeoutError:
                     if not wait:
                         break
