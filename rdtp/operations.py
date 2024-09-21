@@ -74,7 +74,8 @@ class UploadOperation:
     def handle(self, addr: sockaddr):
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr)
-        # upload the file in chunks of size UPLOAD_CHUNK_SIZE
+        # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
+        # it's less than the file size
         bytes_read = 0
         chunk_size = min(UPLOAD_CHUNK_SIZE, self.file_size)
         with open(self.filepath, "rb") as file:

@@ -28,7 +28,7 @@ class RDTSegment:
     """An RDTP (Reliable Data Transfer Protocol) segment"""
 
     """Size of the sequence number in bytes"""
-    SEQ_SIZE = 1
+    SEQ_SIZE = 4
 
     """Size of the segment header in bytes"""
     HEADER_SIZE = SEQ_SIZE * 2
@@ -43,14 +43,14 @@ class RDTSegment:
         seq = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
         data = data[RDTSegment.SEQ_SIZE :]
 
-        ack = int.from_bytes(data[:1], byteorder=sys.byteorder)
-        data = data[1:]
+        ack = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
+        data = data[RDTSegment.SEQ_SIZE :]
 
         return RDTSegment(data, seq, ack)
 
     def to_bytes(self):
         res = self.seq.to_bytes(RDTSegment.SEQ_SIZE, byteorder=sys.byteorder)
-        res += self.ack.to_bytes(1, byteorder=sys.byteorder)
+        res += self.ack.to_bytes(RDTSegment.SEQ_SIZE, byteorder=sys.byteorder)
         res += self.data
         return res
 
@@ -92,6 +92,10 @@ class RDTTransport:
 
     def __exit__(self, *args):
         return self.sock.__exit__(*args)
+
+    @property
+    def _sockfd(self):
+        return self.sock.fileno()
 
     def _create_segment(self, data: bytes = None, seq: int = None, ack: int = None):
         data = data or bytes()
@@ -152,11 +156,12 @@ class RDTTransport:
 
     def read(self, bufsize: int):
         ready = select.select(
-            [self.sock],
+            [self._sockfd],
             [],
             [],
             self.read_timeout,
         )
+        logging.debug(f"Reading fd {self._sockfd}: {ready}")
         if ready[0]:
             message, client_address = self.sock.recvfrom(
                 bufsize + RDTSegment.HEADER_SIZE

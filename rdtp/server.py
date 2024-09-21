@@ -17,6 +17,7 @@ class ClientHandler:
             while bytes_written < self.op.file_size:
                 pkt = yield
                 bytes_written += f.write(pkt.data)
+            logging.debug(f"Saving file {self.op.destination}")
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         if not self.op:
@@ -46,7 +47,7 @@ class Server:
         sock.bind(self.address.as_tuple())
         # we don't want this to block on read or write operations, so
         # set both timeouts to 0 or as close to it as possible
-        self.transport = RDTTransport(sock, sock_timeout=0, read_timeout=0.1)
+        self.transport = RDTTransport(sock, sock_timeout=0, read_timeout=0.01)
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         self.clients[addr.as_tuple()]._ack(pkt, addr)
@@ -54,7 +55,7 @@ class Server:
     def add_client(self, addr):
         self.clients[addr] = StopAndWaitTransport(sock=self.transport.sock)
 
-    def start(self, wait=True):
+    def start(self):
         logging.info("Ready to receive connections")
         try:
             while True:
@@ -65,13 +66,15 @@ class Server:
                         self.add_client(addr)
                     self.on_receive(pkt, sockaddr(*addr))
                 except TimeoutError:
-                    if not wait:
-                        break
                     continue
         except KeyboardInterrupt:
             logging.debug("Stopped by Ctrl+C")
         finally:
-            self.transport.close()
+            logging.debug("Server shutting down")
+            self.close()
+
+    def close(self):
+        self.transport.close()
 
 
 class FileTransferServer(Server):
