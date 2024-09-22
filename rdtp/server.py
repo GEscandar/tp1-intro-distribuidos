@@ -52,19 +52,18 @@ class Server:
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         self.clients[addr.as_tuple()]._ack(pkt, addr)
 
-    def add_client(self, addr):
-        self.clients[addr] = StopAndWaitTransport(sock=self.transport.sock)
+    def add_client(self, addr: sockaddr):
+        self.clients[addr.as_tuple()] = StopAndWaitTransport(sock=self.transport.sock)
 
     def start(self):
         logging.info("Ready to receive connections")
         try:
             while True:
                 try:
-                    data, addr = self.transport.read(2048)
-                    pkt = RDTSegment.unpack(data)
-                    if addr not in self.clients:
+                    pkt, addr = self.transport.read(2048)
+                    if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
-                    self.on_receive(pkt, sockaddr(*addr))
+                    self.on_receive(pkt, addr)
                 except TimeoutError:
                     continue
         except KeyboardInterrupt:
@@ -83,7 +82,7 @@ class FileTransferServer(Server):
         client.transport._ack(pkt, addr)
         client.on_receive(pkt, addr)
 
-    def add_client(self, addr):
-        self.clients[addr] = ClientHandler(
+    def add_client(self, addr: sockaddr):
+        self.clients[addr.as_tuple()] = ClientHandler(
             transport=StopAndWaitTransport(sock=self.transport.sock)
         )

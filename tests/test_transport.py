@@ -32,16 +32,18 @@ def test_base_send():
         bytes_sent = client.send(b"a", sockaddr(*addr))
         assert client.seq == 1
         assert client.ack == 1
-        assert bytes_sent == 3
+        assert bytes_sent == RDTSegment.HEADER_SIZE + 1
     finally:
         server.close()
         if t.is_alive():
             t.join()
 
+
 def test_complete_send():
-    client = StopAndWaitTransport()
     addr = ("localhost", 12346)
-    t = threading.Thread(target=basic_server, args=addr)
+    client = StopAndWaitTransport()
+    server = Server(addr[1])
+    t = threading.Thread(target=basic_server, args=[server])
     try:
         t.start()
         # send 1 byte of data and wait for ack
@@ -49,7 +51,8 @@ def test_complete_send():
         print(f"bytes sent: {bytes_sent}")
         assert client.seq == 10
         assert client.ack == 10
-        assert bytes_sent == 12 # 10 + header (2)
+        assert bytes_sent == 10 + RDTSegment.HEADER_SIZE  # 10 + header (2)
     finally:
+        server.close()
         if t.is_alive():
-            t.join()    
+            t.join()
