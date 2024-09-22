@@ -28,7 +28,7 @@ class RDTSegment:
     """An RDTP (Reliable Data Transfer Protocol) segment"""
 
     """Size of the sequence number in bytes"""
-    SEQ_SIZE = 1
+    SEQ_SIZE = 4
 
     """Size of the segment header in bytes"""
     HEADER_SIZE = SEQ_SIZE * 2
@@ -41,14 +41,16 @@ class RDTSegment:
     @staticmethod
     def unpack(data: bytes):
         seq = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
-        ack = int.from_bytes(data[RDTSegment.SEQ_SIZE:RDTSegment.HEADER_SIZE], byteorder=sys.byteorder)
-        data = data[RDTSegment.HEADER_SIZE::]
+        data = data[RDTSegment.SEQ_SIZE :]
+
+        ack = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
+        data = data[RDTSegment.SEQ_SIZE :]
 
         return RDTSegment(data, seq, ack)
 
     def to_bytes(self):
         res = self.seq.to_bytes(RDTSegment.SEQ_SIZE, byteorder=sys.byteorder)
-        res += self.ack.to_bytes(1, byteorder=sys.byteorder)
+        res += self.ack.to_bytes(RDTSegment.SEQ_SIZE, byteorder=sys.byteorder)
         res += self.data
         return res
 
@@ -82,6 +84,7 @@ class RDTTransport:
             raise ValueError("read_timeout cannot be None")
         self.sock = sock
         self.read_timeout = read_timeout
+        self.closed = False
         self.seq = 0
         self.ack = 0
 
@@ -89,7 +92,12 @@ class RDTTransport:
         return self
 
     def __exit__(self, *args):
-        return self.sock.__exit__(*args)
+        if not self.closed:
+            self.close()
+
+    @property
+    def _sockfd(self):
+        return self.sock.fileno()
 
     def _create_segment(self, data: bytes = None, seq: int = None, ack: int = None):
         data = data or bytes()
@@ -99,7 +107,7 @@ class RDTTransport:
 
     def send_all(self, data: bytes, amount: int, address: sockaddr):
         bytes_sent = 0
-        while (bytes_sent < amount):
+        while bytes_sent < amount:
             bytes_sent += self.sock.sendto(data[bytes_sent:], address)
             print("paso por el loop")
         return bytes_sent
@@ -134,7 +142,16 @@ class RDTTransport:
             self.seq += data_len
         return bytes_sent
 
+    def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
+        raise NotImplementedError
+
     def _ack(self, pkt: RDTSegment, addr: sockaddr):
+        """Send an acknowledgement for the received packet
+
+        Args:
+            pkt (RDTSegment): The received packet
+            addr (sockaddr): Peer address
+        """
         if pkt.seq == self.ack:
             if pkt.data:
                 # got a non-empty data packet, send ack
@@ -147,26 +164,26 @@ class RDTTransport:
             # retransmission, resend ack
             self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
 
-
     def recv_segment(self, bufsize: int):
-        message, client_address = self.sock.recvfrom(
-            bufsize + RDTSegment.HEADER_SIZE
-        )
+        message, client_address = self.sock.recvfrom(bufsize + RDTSegment.HEADER_SIZE)
         segment = RDTSegment.unpack(message)
         print(f"segment: {segment}")
         return segment, client_address
 
     def read(self, bufsize: int):
-        ready = select.select(
-            [self.sock],
-            [],
-            [],
-            self.read_timeout,
-        )
-        if ready[0]:
-            segment, client_address = self.recv_segment(bufsize)
-            return segment, client_address
-        raise TimeoutError
+        if not self.closed:
+            ready = select.select(
+                [self._sockfd],
+                [],
+                [],
+                self.read_timeout,
+            )
+            logging.debug(f"Reading fd {self._sockfd}: {ready}")
+            if ready[0]:
+                data, addr = self.sock.recvfrom(bufsize + RDTSegment.HEADER_SIZE)
+                return RDTSegment.unpack(data), sockaddr(*addr)
+            raise TimeoutError
+        raise ConnectionError("Socket closed")
 
     # def receive(self, bufsize, max_retries=MAX_RETRIES):
     #     """
@@ -207,9 +224,11 @@ class RDTTransport:
         #         if not wait:
         #             break
         #         continue
-
         logging.debug("Closing UDP socket")
-        self.sock.close()
+        try:
+            self.sock.close()
+        finally:
+            self.closed = True
 
 
 class StopAndWaitTransport(RDTTransport):
