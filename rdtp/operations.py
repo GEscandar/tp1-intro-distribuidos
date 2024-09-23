@@ -3,7 +3,7 @@ import enum
 import sys
 from pathlib import Path
 from typing import Union
-from rdtp import sockaddr, RDTTransport, StopAndWaitTransport
+from rdtp.transport import sockaddr, RDTTransport, StopAndWaitTransport
 
 UPLOAD_CHUNK_SIZE = 1024
 

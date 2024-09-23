@@ -1,6 +1,7 @@
 import threading
 import logging
-from rdtp import RDTTransport, RDTSegment, Server, StopAndWaitTransport, sockaddr
+from rdtp.transport import RDTSegment, StopAndWaitTransport, sockaddr
+from rdtp.server import Server
 
 
 def basic_server(server):
@@ -23,7 +24,7 @@ def test_segment_unpack():
 def test_base_send():
     addr = ("localhost", 12345)
     client = StopAndWaitTransport()
-    server = Server(addr[1])
+    server = Server(addr[0], addr[1])
     print(client.read_timeout)
     t = threading.Thread(target=basic_server, args=[server])
     try:
@@ -42,7 +43,7 @@ def test_base_send():
 def test_complete_send():
     addr = ("localhost", 12346)
     client = StopAndWaitTransport()
-    server = Server(addr[1])
+    server = Server(addr[0], addr[1])
     t = threading.Thread(target=basic_server, args=[server])
     try:
         t.start()

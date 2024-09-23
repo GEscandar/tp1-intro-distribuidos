@@ -1,8 +1,6 @@
-from pathlib import Path
 import click
 import functools
 from typing import Optional
-from rdtp.server import FileTransferServer
 from rdtp.transport import *
 from rdtp.exceptions import *
 from rdtp.operations import run_operation, UploadOperation
@@ -54,21 +52,30 @@ def main(
 )
 @click.option(
     "-s",
-    "--storage",
+    "--src",
     type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, readable=True, path_type=str
+        exists=True, file_okay=True, dir_okay=True, readable=True, path_type=str
     ),
-    help="folder path, used for files upload and download",
+    help="source file path",
+)
+@click.option(
+    "-n",
+    "--name",
+    help="file name",
 )
 @common_options
 @click.pass_context
 def main(
-    ctx: click.Context, storage: Path, verbose: bool, quiet: bool, host: str, port: int
+    ctx: click.Context,
+    src: str,
+    name: str,
+    verbose: bool,
+    quiet: bool,
+    host: str,
+    port: int,
 ):
-    print("Starting server")
-    server = FileTransferServer(host, port, storage)
-
-    server.start()
+    print(f"valores: {src} ,{name},{verbose} , {host}, {port}")
+    run_operation(UploadOperation.opcode, src, host, port, name)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 import socket
 import random
-from server import SERVER_ADDRESS
+from testing_server import SERVER_ADDRESS
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from rdtp.transport import StopAndWaitTransport, sockaddr
