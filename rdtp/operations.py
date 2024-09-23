@@ -15,18 +15,39 @@ class DownloadOperation:
         self,
         transport: RDTTransport,
         filename: str,
-        destination: Union[str, Path],
+        destination: Union[str, Path] = None,
     ) -> None:
         self.transport = transport
         self.filename = filename
-        self.destination = Path(destination)
+        self.destination = Path(destination) if destination else filename
+
+    def get_op_metadata(self) -> bytes:
+        data = self.opcode  # operation code (1 byte)
+        data += len(self.filename).to_bytes(
+            length=1, byteorder=sys.byteorder
+        )  # filename size (1 byte)
+        data += self.filename.encode()  # filename (up to 255 bytes)
+        return data
 
     @staticmethod
     def unpack(transport: RDTTransport, data: bytes):
-        pass
+        filename_size = int.from_bytes(data[:1], byteorder=sys.byteorder)
+        filename = data[1 : 1 + filename_size].decode()
+        return DownloadOperation(transport, filename)
 
     def handle(self, addr: sockaddr):
-        pass
+        print(f"Starting download for file {self.filename}")
+        # tell the server what we're going to do
+        self.transport.send(self.get_op_metadata(), addr)
+        resp, _ = self.transport.receive(4096)
+        file_size = int.from_bytes(resp.data, sys.byteorder)
+        print(f"Got file size of {file_size}, fetching data")
+        bytes_written = 0
+        with open(self.destination, "wb") as f:
+            while bytes_written < file_size:
+                pkt, _ = self.transport.receive(4096)
+                print("writing data: ", pkt.data)
+                bytes_written += f.write(pkt.data)
 
 
 class UploadOperation:
@@ -85,7 +106,10 @@ class UploadOperation:
                 self.transport.send(content, addr)
 
 
-operations = {UploadOperation.opcode: UploadOperation}
+operations = {
+    UploadOperation.opcode: UploadOperation,
+    DownloadOperation.opcode: DownloadOperation,
+}
 
 
 def unpack_operation(transport: RDTTransport, data: bytes):

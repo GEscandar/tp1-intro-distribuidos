@@ -51,3 +51,9 @@ def test_upload_medium_small_file():
     addr = ("localhost", 23457)
     filepath = Path("tests", "files", "medium_small.txt")
     upload(addr, filepath)
+
+
+def test_upload_medium_file():
+    addr = ("localhost", 23458)
+    filepath = Path("tests", "files", "medium.txt")
+    upload(addr, filepath)
