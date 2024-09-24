@@ -1,54 +1,10 @@
 from pathlib import Path
 import click
-import functools
-from typing import Optional
 from rdtp.server import FileTransferServer
-from rdtp.transport import *
-from rdtp.exceptions import *
-from rdtp.operations import run_operation, UploadOperation
+from utils import common_options
 
 
-def common_options(f):
-    options = [
-        click.option(
-            "-v",
-            "--verbose",
-            is_flag=True,
-            help=("Emit messages about ongoing file transfer operations"),
-        ),
-        click.option(
-            "-q",
-            "--quiet",
-            is_flag=True,
-            help=("decrease output verbosity"),
-        ),
-        click.option(
-            "-H",
-            "--host",
-            help=("server IP address"),
-        ),
-        click.option(
-            "-p",
-            "--port",
-            type=int,
-            help=("server port"),
-        ),
-    ]
-    return functools.reduce(lambda x, opt: opt(x), options, f)
-
-
-@click.group(
-    context_settings={"help_option_names": ["-h", "--help"]},
-    help="A safe UDP file transfer tool.",
-)
-@click.pass_context
-def main(
-    ctx: click.Context,
-):
-    pass
-
-
-@main.command(
+@click.command(
     context_settings={"help_option_names": ["-h", "--help"]},
     help="Upload a file to an rdtp server.",
 )
@@ -60,13 +16,12 @@ def main(
     ),
     help="folder path, used for files upload and download",
 )
-@common_options
+@common_options(host=False)
 @click.pass_context
-def main(
-    ctx: click.Context, storage: Path, verbose: bool, quiet: bool, host: str, port: int
-):
-    print("Starting server")
-    server = FileTransferServer(host, port, storage)
+def main(ctx: click.Context, storage: Path, verbose: bool, quiet: bool, port: int):
+    print(f"Starting server at port {port}")
+    addr = ("", port)
+    server = FileTransferServer(*addr, storage)
 
     server.start()
 
