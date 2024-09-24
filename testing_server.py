@@ -1,5 +1,7 @@
+from pathlib import Path
 import socket
 import select
+from src.lib.rdtp.server import FileTransferServer
 
 SERVER_ADDRESS = ("localhost", 12345)
 
@@ -28,7 +30,12 @@ def main():
                 s.sendto(resp, addr)
 
 
+# ejemplo de cliente
+# python3 -m rdtp upload -s tests/files/small.txt -n archi.txt -q -H 127.0.0.1 -p 12345
 if __name__ == "__main__":
-    from test import basic_server
+    print("Starting server")
+    filepath = Path("server_storage")
 
-    basic_server(*SERVER_ADDRESS)
+    server = FileTransferServer(SERVER_ADDRESS[0], SERVER_ADDRESS[1], filepath)
+
+    server.start()

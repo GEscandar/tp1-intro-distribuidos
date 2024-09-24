@@ -2,6 +2,7 @@ import logging
 import socket
 import os
 import sys
+from pathlib import Path
 from .operations import (
     unpack_operation,
     UploadOperation,
@@ -15,15 +16,14 @@ from .exceptions import ConnectionError
 
 class ClientOperationHandler:
 
-    def __init__(self, transport: RDTTransport, client_addr: sockaddr) -> None:
+    def __init__(self, transport: RDTTransport) -> None:
         self.op = None
         self.handler = None
-        self.client_addr = client_addr
         self.transport = transport
 
-    def _init_handler(self):
+    def _init_handler(self, client_addr: sockaddr, storage_path: Path):
         if self.op.opcode == UploadOperation.opcode:
-            self.handler = self.handle_upload()
+            self.handler = self.handle_upload(storage_path)
             self.handler.send(None)
         elif self.op.opcode == DownloadOperation.opcode:
             file_size = os.stat(self.op.filename).st_size
@@ -34,17 +34,21 @@ class ClientOperationHandler:
             # send file size to client without waiting too long for the ack
             self.transport.send(
                 file_size.to_bytes(4, sys.byteorder),
-                self.client_addr,
+                client_addr,
                 max_retries=3,
             )
 
-    def handle_upload(self):
+    def handle_upload(self, storage_path: Path):
         bytes_written = 0
-        with open(self.op.destination, "wb") as f:
+
+        if not os.path.exists(storage_path):
+            os.makedirs(storage_path)
+        dest = Path(storage_path, self.op.destination)
+        with open(dest, "wb") as f:
             while bytes_written < self.op.file_size:
                 pkt = yield
                 bytes_written += f.write(pkt.data)
-            logging.debug(f"Saving file {self.op.destination}")
+            logging.debug(f"Saving file {dest}")
 
     def handle_download(self, file_size):
         bytes_read = 0
@@ -65,13 +69,13 @@ class ClientOperationHandler:
                 self.op = None
         return content
 
-    def on_receive(self, pkt: RDTSegment, addr: sockaddr):
+    def on_receive(self, pkt: RDTSegment, addr: sockaddr, storage_path: Path):
         if not self.op:
             # only unpack the first time
             print(f"Operation data: {pkt.data}")
             self.op = unpack_operation(self.transport, pkt.data)
             print(f"Unpacked operation: {type(self.op)} - {self.op.__dict__}")
-            self._init_handler()
+            self._init_handler(addr, storage_path)
             return
 
         if self.op.opcode == UploadOperation.opcode:
@@ -85,8 +89,8 @@ class ClientOperationHandler:
 class Server:
     """Asynchronous server for RDTP"""
 
-    def __init__(self, port: int, transport_factory=RDTTransport):
-        self.address = sockaddr("", port)
+    def __init__(self, host: str, port: int, transport_factory=RDTTransport):
+        self.address = sockaddr(host, port)
         self.clients = {}
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(self.address.as_tuple())
@@ -124,18 +128,21 @@ class Server:
 
 
 class FileTransferServer(Server):
-    def __init__(self, port: int, transport_factory=StopAndWaitTransport):
-        super().__init__(port, transport_factory)
+    def __init__(
+        self, host: str, port: int, path: Path, transport_factory=StopAndWaitTransport
+    ):
+        super().__init__(host, port, transport_factory)
         self.chunk_size = max(UPLOAD_CHUNK_SIZE, DOWNLOAD_CHUNK_SIZE)
+        self.storage_path = path
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         client = self.clients[addr.as_tuple()]
         client.transport._ack(pkt, addr)
-        client.on_receive(pkt, addr)
+        client.on_receive(pkt, addr, self.storage_path)
 
     def add_client(self, addr: sockaddr):
         self.clients[addr.as_tuple()] = ClientOperationHandler(
-            transport=StopAndWaitTransport(sock=self.transport.sock), client_addr=addr
+            transport=StopAndWaitTransport(sock=self.transport.sock)
         )
 
     def start(self):

@@ -1,11 +1,10 @@
 import logging
 import threading
 import time
-import os
 from pathlib import Path
-from rdtp.transport import StopAndWaitTransport, sockaddr
-from rdtp.server import FileTransferServer
-from rdtp.operations import UploadOperation, run_operation
+from src.lib.rdtp.transport import StopAndWaitTransport
+from src.lib.rdtp.server import FileTransferServer
+from src.lib.rdtp.operations import UploadOperation, run_operation
 
 
 def basic_server(server):
@@ -18,10 +17,11 @@ def basic_server(server):
 
 
 def upload(addr, filepath: Path):
-    server = FileTransferServer(addr[1])
+    storage_path = Path("server_storage")
+    server = FileTransferServer(addr[0], addr[1], storage_path)
     client = StopAndWaitTransport()
     # print(client.read_timeout)
-    created_file = Path(filepath.name)
+    created_file = Path(storage_path, filepath.name)
     t = threading.Thread(target=basic_server, args=[server])
     try:
         t.start()

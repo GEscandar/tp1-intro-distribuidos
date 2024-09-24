@@ -4,8 +4,7 @@ import select
 import sys
 import errno
 from dataclasses import dataclass, astuple
-from typing import Union, Tuple
-from rdtp.exceptions import ConnectionError
+from .exceptions import ConnectionError
 
 MAX_RETRIES = 10
 READ_TIMEOUT = 1.0

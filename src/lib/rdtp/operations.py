@@ -1,9 +1,8 @@
-import multiprocessing as mp
 import logging
 import sys
 from pathlib import Path
 from typing import Union
-from rdtp import sockaddr, RDTTransport, StopAndWaitTransport
+from .transport import sockaddr, RDTTransport, StopAndWaitTransport
 
 UPLOAD_CHUNK_SIZE = 1024
 DOWNLOAD_CHUNK_SIZE = 4096
