@@ -7,6 +7,7 @@ from utils import common_options
 @click.command(
     context_settings={"help_option_names": ["-h", "--help"]},
     help="Upload a file to an rdtp server.",
+    no_args_is_help=True,
 )
 @click.option(
     "-s",
