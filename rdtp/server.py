@@ -147,7 +147,7 @@ class FileTransferServer(Server):
                     for addr, client in self.clients.items():
                         pending = client.get_pending()
                         if pending:
-                            self.clients[addr].transport.send(pending, sockaddr(*addr))
+                            client.transport.send(pending, sockaddr(*addr))
                     pkt, addr = self.transport.read(self.chunk_size)
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)

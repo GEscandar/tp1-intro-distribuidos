@@ -8,7 +8,7 @@ from typing import Union, Tuple
 from rdtp.exceptions import ConnectionError
 
 MAX_RETRIES = 10
-READ_TIMEOUT = 5.0
+READ_TIMEOUT = 1.0
 DEFAULT_TIMEOUT = 2
 
 __all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
@@ -195,38 +195,13 @@ class RDTTransport:
         pkt, addr = self.read(bufsize)
         self._ack(pkt, addr)
         return pkt, addr
-        # for i in range(max_retries + 1):
-        #     try:
-        #         pkt, addr = self.read(bufsize)
-        #         if pkt.seq == self.ack:
-        #             if pkt.data:
-        #                 # got a non-empty data packet, send ack
-        #                 self.ack += len(pkt.data)
-        #                 ack_pkt = self._create_segment()
-        #                 logging.debug(f"got package. sending ACK. pkt=[{ack_pkt}]")
-        #                 print(f"got package. sending ACK to {addr}. pkt=[{ack_pkt}]")
-        #                 self._send(ack_pkt, addr)
-        #             return pkt, addr
-        #         elif pkt.seq < self.ack:
-        #             # retransmission, resend ack
-        #             self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
-        #     except TimeoutError:
-        #         if max_retries == 0:
-        #             raise
-        #         continue
-        # raise ConnectionError("Connection lost")
 
     def close(self, wait=False):
-        # Wait for resends due to lost outgoing acks
-        # for i in range(MAX_RETRIES + 1):
+        # Wait for resends due to packet loss
+        # for _ in range(MAX_RETRIES + 1):
         #     try:
-        #         data, addr = self.read(1024)
-        #         pkt = RDTSegment.unpack(data)
-        #         addr = sockaddr(*addr)
-        #         if not pkt.ack:
-        #             pkt.ack = 1
-        #             self.send(pkt, addr)
-        #     except TimeoutError:
+        #         self.receive(1024)
+        #     except (TimeoutError, BlockingIOError):
         #         if not wait:
         #             break
         #         continue
@@ -250,7 +225,7 @@ class StopAndWaitTransport(RDTTransport):
                     self._create_segment(data, seq, ack),
                     address,
                 )
-                ack_segment, _ = self.read(4096)
+                ack_segment, _ = self.read(0)
                 logging.debug(
                     f"Received ack: {ack_segment.ack}, expected ack={self.seq}"
                 )
