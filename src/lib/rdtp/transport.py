@@ -3,8 +3,7 @@ import logging
 import select
 import sys
 from dataclasses import dataclass, astuple
-from typing import Union, Tuple
-from rdtp.exceptions import ConnectionError
+from .exceptions import ConnectionError
 
 MAX_RETRIES = 10
 READ_TIMEOUT = 5.0

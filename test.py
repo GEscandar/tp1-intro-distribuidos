@@ -1,7 +1,5 @@
-import socket
-import threading
-import multiprocessing as mp
-from rdtp import RDTTransport, StopAndWaitTransport, Server, sockaddr
+from src.lib.rdtp.transport import StopAndWaitTransport, sockaddr
+from src.lib.rdtp.server import Server
 
 
 def basic_server(host, port):

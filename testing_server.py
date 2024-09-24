@@ -1,7 +1,7 @@
 from pathlib import Path
 import socket
 import select
-from rdtp.server import FileTransferServer, Server
+from src.lib.rdtp.server import FileTransferServer
 
 SERVER_ADDRESS = ("localhost", 12345)
 

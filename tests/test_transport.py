@@ -1,7 +1,7 @@
 import threading
 import logging
-from rdtp.transport import RDTSegment, StopAndWaitTransport, sockaddr
-from rdtp.server import Server
+from src.lib.rdtp.transport import RDTSegment, StopAndWaitTransport, sockaddr
+from src.lib.rdtp.server import Server
 
 
 def basic_server(server):

@@ -1,6 +1,6 @@
 import click
-from rdtp.operations import run_operation, UploadOperation
-from utils import common_options
+from lib.rdtp.operations import run_operation, UploadOperation
+from lib.utils import common_options
 
 
 @click.command(
