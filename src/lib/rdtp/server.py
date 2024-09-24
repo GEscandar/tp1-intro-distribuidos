@@ -1,7 +1,23 @@
 import logging
+import os
+from pathlib import Path
 import socket
 from .operations import unpack_operation, UploadOperation
 from .transport import RDTTransport, StopAndWaitTransport, RDTSegment, sockaddr
+import select
+
+SERVER_ADDRESS = ("localhost", 12345)
+
+
+def read(sock: socket.socket, bufsize: int, wait=True):
+    message, client_address = (None, None)
+    ready = select.select([sock], [], [], 10 if wait else 0)
+    if ready[0]:
+        message, client_address = sock.recvfrom(bufsize)
+    elif wait:
+        raise TimeoutError
+
+    return message, client_address
 
 
 class ClientHandler:
@@ -11,15 +27,18 @@ class ClientHandler:
         self.handler = None
         self.transport = transport
 
-    def handle_upload(self):
+    def handle_upload(self, storage_path: Path):
         bytes_written = 0
-        with open(self.op.destination, "wb") as f:
+
+        if not os.path.exists(storage_path):
+            os.makedirs(storage_path)
+        with open(Path(storage_path, self.op.destination), "wb") as f:
             while bytes_written < self.op.file_size:
                 pkt = yield
                 bytes_written += f.write(pkt.data)
             logging.debug(f"Saving file {self.op.destination}")
 
-    def on_receive(self, pkt: RDTSegment, addr: sockaddr):
+    def on_receive(self, pkt: RDTSegment, addr: sockaddr, storage_path: Path):
         if not self.op:
             # only unpack the first time
             print(f"Operation data: {pkt.data}")
@@ -29,7 +48,7 @@ class ClientHandler:
 
         if self.op.opcode == UploadOperation.opcode:
             if not self.handler:
-                self.handler = self.handle_upload()
+                self.handler = self.handle_upload(storage_path)
                 self.handler.send(None)
             try:
                 self.handler.send(pkt)
@@ -40,8 +59,8 @@ class ClientHandler:
 class Server:
     """Asynchronous server for RDTP"""
 
-    def __init__(self, port: int):
-        self.address = sockaddr("", port)
+    def __init__(self, host: str, port: int):
+        self.address = sockaddr(host, port)
         self.clients = {}
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(self.address.as_tuple())
@@ -77,10 +96,15 @@ class Server:
 
 
 class FileTransferServer(Server):
+    def __init__(self, host: str, port: int, path: Path):
+        # Call the parent class's __init__ method
+        super().__init__(host, port)
+        self.storage_path = path
+
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         client = self.clients[addr.as_tuple()]
         client.transport._ack(pkt, addr)
-        client.on_receive(pkt, addr)
+        client.on_receive(pkt, addr, self.storage_path)
 
     def add_client(self, addr: sockaddr):
         self.clients[addr.as_tuple()] = ClientHandler(

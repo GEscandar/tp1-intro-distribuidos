@@ -1,9 +1,7 @@
 import socket
-import random
-from server import SERVER_ADDRESS
-import threading
+from testing_server import SERVER_ADDRESS
 from concurrent.futures import ThreadPoolExecutor
-from rdtp.transport import StopAndWaitTransport, sockaddr
+from src.lib.rdtp.transport import StopAndWaitTransport, sockaddr
 
 
 def client_send(*things):
