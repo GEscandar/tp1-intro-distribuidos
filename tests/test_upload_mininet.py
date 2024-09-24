@@ -3,9 +3,9 @@ import threading
 import time
 import os
 from pathlib import Path
-from rdtp.transport import StopAndWaitTransport, sockaddr
-from rdtp.server import FileTransferServer
-from rdtp.operations import UploadOperation, run_operation
+from src.lib.rdtp.transport import StopAndWaitTransport, sockaddr
+from src.lib.rdtp.server import FileTransferServer
+from src.lib.rdtp.operations import UploadOperation, run_operation
 
 from mininet.net import Mininet
 from mininet.topo import Topo
@@ -28,14 +28,15 @@ def upload(port, filepath: Path):
     server = net.get('h1')
     client = net.get('h2')
     net.start()
-    
-    server_command = f"python3 -c \"from rdtp.server import FileTransferServer;server=FileTransferServer({port});server.start()\""
-    client_command = f"python3 -c \"from rdtp.operations import UploadOperation, run_operation;run_operation({UploadOperation.opcode}, '{filepath.absolute()}', '{server.IP()}', {port}, '{filepath.name}')\""
-    
+
+    server_command = f"python3 src/server.py -s server_storage -H {server.IP()} -p {port}"
+    client_command = f"python3 src/upload.py -s {filepath.absolute()} -n {filepath.name} -q -H {server.IP()} -p {port}"
+
     logging.info(server_command)
     logging.info(client_command)
-    created_file = Path(filepath.name)
-    try: 
+    created_file = Path("server_storage", filepath.name)
+
+    try:
         server.sendCmd(server_command)
         logging.info("Starting client")
 
@@ -47,8 +48,8 @@ def upload(port, filepath: Path):
         assert created_file.exists()
         assert created_file.stat().st_size == filepath.stat().st_size
     finally:
-        if created_file.exists():
-            created_file.unlink()
+        # if created_file.exists():
+        #     created_file.unlink()
         net.stop()
 
 

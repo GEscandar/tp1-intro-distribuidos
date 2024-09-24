@@ -1,16 +1,8 @@
-#!/usr/bin/python                                                                            
-                                                                                             
 from mininet.topo import Topo
 from mininet.net import Mininet
 from mininet.util import dumpNodeConnections
 from mininet.log import setLogLevel
-from mininet.link import TCLink
-from mininet.node import RemoteController, Node
 
-import threading
-
-
-from rdtp.operations import UploadOperation, run_operation
 from pathlib import Path
 
 
@@ -27,8 +19,7 @@ class SingleSwitchTopo(Topo):
 def simpleTest():
     "Create and test a simple network"
     topo = SingleSwitchTopo()
-    controller = RemoteController('c1')
-    net = Mininet(topo=topo, controller=controller)
+    net = Mininet(topo=topo, controller=None)
     net.start()
     print( "Dumping host connections" )
     dumpNodeConnections(net.hosts)
@@ -39,8 +30,8 @@ def simpleTest():
     port=23457
     filepath = Path("tests", "files", "small.txt")
 
-    server_command = f"python3 -c \"from rdtp.server import FileTransferServer;server=FileTransferServer({port});server.start()\""
-    client_command = f"python3 -c \"from rdtp.operations import UploadOperation, run_operation;run_operation({UploadOperation.opcode}, '{filepath.absolute()}', '{server.IP()}', {port}, '{filepath.name}')\""
+    server_command = f"python3 src/server.py -s server_storage -H {server.IP()} -p {port}"
+    client_command = f"python3 src/upload.py -s {filepath.absolute()} -n {filepath.name} -q -H {server.IP()} -p {port}"
 
     server.sendCmd(server_command)
     print("Starting client")
