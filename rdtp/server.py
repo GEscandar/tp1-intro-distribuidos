@@ -2,8 +2,15 @@ import logging
 import socket
 import os
 import sys
-from .operations import unpack_operation, UploadOperation, DownloadOperation
+from .operations import (
+    unpack_operation,
+    UploadOperation,
+    DownloadOperation,
+    UPLOAD_CHUNK_SIZE,
+    DOWNLOAD_CHUNK_SIZE,
+)
 from .transport import RDTTransport, StopAndWaitTransport, RDTSegment, sockaddr
+from .exceptions import ConnectionError
 
 
 class ClientOperationHandler:
@@ -41,7 +48,8 @@ class ClientOperationHandler:
 
     def handle_download(self, file_size):
         bytes_read = 0
-        chunk_size = 4096 - RDTSegment.HEADER_SIZE
+        # chunk_size = DOWNLOAD_CHUNK_SIZE - RDTSegment.HEADER_SIZE
+        chunk_size = DOWNLOAD_CHUNK_SIZE
         with open(self.op.filename, "rb") as f:
             while bytes_read < file_size:
                 yield f.read(chunk_size)
@@ -84,7 +92,7 @@ class Server:
         sock.bind(self.address.as_tuple())
         # we don't want this to block on read or write operations, so
         # set both timeouts to 0 or as close to it as possible
-        self.transport = transport_factory(sock, sock_timeout=0, read_timeout=0.01)
+        self.transport = transport_factory(sock, sock_timeout=0, read_timeout=0)
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         pass
@@ -97,16 +105,18 @@ class Server:
         try:
             while True:
                 try:
-                    pkt, addr = self.transport.receive(4096, max_retries=0)
+                    pkt, addr = self.transport.receive(4096)
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
                     self.on_receive(pkt, addr)
-                except TimeoutError:
+                except BlockingIOError:
                     continue
+                except ConnectionError:
+                    break
         except KeyboardInterrupt:
             logging.debug("Stopped by Ctrl+C")
         finally:
-            logging.debug("Server shutting down")
+            logging.info("Server shutting down")
             self.close()
 
     def close(self):
@@ -116,9 +126,11 @@ class Server:
 class FileTransferServer(Server):
     def __init__(self, port: int, transport_factory=StopAndWaitTransport):
         super().__init__(port, transport_factory)
+        self.chunk_size = max(UPLOAD_CHUNK_SIZE, DOWNLOAD_CHUNK_SIZE)
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         client = self.clients[addr.as_tuple()]
+        client.transport._ack(pkt, addr)
         client.on_receive(pkt, addr)
 
     def add_client(self, addr: sockaddr):
@@ -135,15 +147,20 @@ class FileTransferServer(Server):
                     for addr, client in self.clients.items():
                         pending = client.get_pending()
                         if pending:
-                            self.transport.send(pending, sockaddr(*addr))
-                    pkt, addr = self.transport.receive(4096, max_retries=0)
+                            self.clients[addr].transport.send(pending, sockaddr(*addr))
+                    pkt, addr = self.transport.read(self.chunk_size)
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
-                    self.on_receive(pkt, addr)
-                except TimeoutError:
+                    try:
+                        self.on_receive(pkt, addr)
+                    except:
+                        self.clients.pop(addr.as_tuple())
+                except BlockingIOError:
                     continue
+                except ConnectionError:
+                    break
         except KeyboardInterrupt:
             logging.debug("Stopped by Ctrl+C")
         finally:
-            logging.debug("Server shutting down")
+            logging.info("Server shutting down")
             self.close()

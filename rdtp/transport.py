@@ -2,6 +2,7 @@ import socket
 import logging
 import select
 import sys
+import errno
 from dataclasses import dataclass, astuple
 from typing import Union, Tuple
 from rdtp.exceptions import ConnectionError
@@ -92,8 +93,7 @@ class RDTTransport:
         return self
 
     def __exit__(self, *args):
-        if not self.closed:
-            self.close()
+        self.close()
 
     @property
     def _sockfd(self):
@@ -132,10 +132,10 @@ class RDTTransport:
         # bytes_sent = self.sock.sendto(data, address.as_tuple())
         bytes_sent = self.send_all(data, len(data), address.as_tuple())
         logging.debug(
-            f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, segment={data}"
+            f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
         )
         print(
-            f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, segment={data}"
+            f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
         )
         if self.seq == segment.seq:
             # After sending, increment the seq number if this is not a retransmission
@@ -152,6 +152,9 @@ class RDTTransport:
             pkt (RDTSegment): The received packet
             addr (sockaddr): Peer address
         """
+        logging.debug(
+            f"Received packet of length: {len(pkt.data)} seq: {pkt.seq}, expected seq={self.ack}"
+        )
         if pkt.seq == self.ack:
             if pkt.data:
                 # got a non-empty data packet, send ack
@@ -166,17 +169,22 @@ class RDTTransport:
 
     def read(self, bufsize: int):
         if not self.closed:
-            ready = select.select(
-                [self._sockfd],
-                [],
-                [],
-                self.read_timeout,
-            )
-            logging.debug(f"Reading fd {self._sockfd}: {ready}")
-            if ready[0]:
+            if self.read_timeout > 0:
+                ready = select.select(
+                    [self._sockfd],
+                    [],
+                    [],
+                    self.read_timeout,
+                )
+                logging.debug(f"Reading fd {self._sockfd}: {ready}")
+                if ready[0]:
+                    data, addr = self.sock.recvfrom(bufsize + RDTSegment.HEADER_SIZE)
+                else:
+                    raise TimeoutError("Socket read timed out")
+            else:
+                # this raises BlockingIOError if data is not yet available to read
                 data, addr = self.sock.recvfrom(bufsize + RDTSegment.HEADER_SIZE)
-                return RDTSegment.unpack(data), sockaddr(*addr)
-            raise TimeoutError
+            return RDTSegment.unpack(data), sockaddr(*addr)
         raise ConnectionError("Socket closed")
 
     def receive(self, bufsize, max_retries=MAX_RETRIES):
@@ -222,11 +230,12 @@ class RDTTransport:
         #         if not wait:
         #             break
         #         continue
-        logging.debug("Closing UDP socket")
-        try:
-            self.sock.close()
-        finally:
-            self.closed = True
+        if not self.closed:
+            logging.debug("Closing UDP socket")
+            try:
+                self.sock.close()
+            finally:
+                self.closed = True
 
 
 class StopAndWaitTransport(RDTTransport):
@@ -248,7 +257,7 @@ class StopAndWaitTransport(RDTTransport):
                 print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
                 if ack_segment.ack != self.seq:
                     continue
-                self.ack = ack_segment.ack
+                # self.ack += len(data)
                 return bytes_sent
             except TimeoutError:
                 continue

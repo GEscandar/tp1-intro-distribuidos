@@ -65,7 +65,7 @@ def test_download_medium_small_file():
     download(addr, filepath)
 
 
-# def test_download_medium_file():
-#     addr = ("localhost", 34569)
-#     filepath = Path("tests", "files", "medium.txt")
-#     download(addr, filepath)
+def test_download_medium_file():
+    addr = ("localhost", 34569)
+    filepath = Path("tests", "files", "medium.txt")
+    download(addr, filepath)

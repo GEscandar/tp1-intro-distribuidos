@@ -1,11 +1,12 @@
 import multiprocessing as mp
-import enum
+import logging
 import sys
 from pathlib import Path
 from typing import Union
 from rdtp import sockaddr, RDTTransport, StopAndWaitTransport
 
 UPLOAD_CHUNK_SIZE = 1024
+DOWNLOAD_CHUNK_SIZE = 4096
 
 
 class DownloadOperation:
@@ -36,17 +37,16 @@ class DownloadOperation:
         return DownloadOperation(transport, filename)
 
     def handle(self, addr: sockaddr):
-        print(f"Starting download for file {self.filename}")
+        logging.info(f"Starting download for file {self.filename}")
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr)
-        resp, _ = self.transport.receive(4096)
+        resp, _ = self.transport.receive(4)
         file_size = int.from_bytes(resp.data, sys.byteorder)
-        print(f"Got file size of {file_size}, fetching data")
+        logging.debug(f"Got file size of {file_size}, fetching data")
         bytes_written = 0
         with open(self.destination, "wb") as f:
             while bytes_written < file_size:
-                pkt, _ = self.transport.receive(4096)
-                print("writing data: ", pkt.data)
+                pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE)
                 bytes_written += f.write(pkt.data)
 
 
