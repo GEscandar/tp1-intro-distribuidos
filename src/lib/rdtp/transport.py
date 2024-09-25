@@ -18,6 +18,7 @@ MAX_RETRIES = 10
 READ_TIMEOUT = 1.0
 DEFAULT_TIMEOUT = 2
 ACK_WAIT_TIME = timedelta(minutes=5)
+SACK_WINDOW_SIZE = 5
 
 __all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
 
@@ -250,65 +251,123 @@ class StopAndWaitTransport(RDTTransport):
 class SelectiveAckTransport(RDTTransport):
     def __init__(self):
         super().__init__()
-        self.msgs_to_ack = dict()  # To store acknowledgment messages
         self.lock = threading.Lock()  # Lock for thread safety
+        self.window = [] # To store acknowledgment messages
+        self.window_size = 0
 
     def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
         seq = self.seq
         ack = self.ack
-        for _ in range(max_retries + 1):
-            try:
+        if self.window_size > SACK_WINDOW_SIZE:
+            self.recv_ack() # Can't send if the window is full
+            return 0
+        
+        segment = self._create_segment(data, seq, ack)
+        bytes_sent = self._send(segment, address)
+        self.window.append(WindowSlot(segment, address, self.seq, False, datetime.now()))
+        self.window_size+=1
 
-                bytes_sent = self._send(
-                    self._create_segment(data, seq, ack),
-                    address,
-                )
+        self.recv_ack()
+        
+        self.check_time_out()
+        return bytes_sent
+            
+    def recv_ack(self): 
+        try:
+            ack_segment, _ = self.read(0)
 
-                return bytes_sent
-            except TimeoutError:
-                continue
-        raise ConnectionError("Connection lost")
-
-    def recv(self):
-        while True:
-            ack_segment, _ = self.read(1024)
-            logging.debug(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
-            print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
-
-            self.remove_msg(ack_segment)
-
-    def remove_msg(self, ack_segment):
-        with self.lock:
-            if ack_segment in self.msgs_to_ack:
-                self.msgs_to_ack.remove(ack_segment)
-
-    def ack_checker(self):
-
-        while True:
-            closest_to_expire = -1
-            with self.lock:
-                for ack, time_stamp in self.msgs_to_ack:
-                    if (ACK_WAIT_TIME - time_stamp).total_seconds() <= 0:
-                        self.send(ack, sockaddr(*SERVER_ADDRESS))
-                    elif closest_to_expire == -1 or time_stamp < closest_to_expire:
-                        closest_to_expire = time_stamp
-            print(
-                f"el checker va a dormir {(closest_to_expire - datetime.now()).total_seconds()}"
+            logging.debug(
+                f"Received ack: {ack_segment.ack}, expected ack={self.seq}"
             )
-            time.sleep((closest_to_expire - datetime.now()).total_seconds())
+            print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
+            self.check_ack(ack_segment)
+        except TimeoutError:
+            print("No se recibio un ack")
 
-    def handle_user_input(self):
-        while True:
-            user_input = input("Write any msg: ").encode()
-            print(f"el user escribio: {user_input}")
-            if user_input == "fin":
-                break
-            sent_bytes = self.send(user_input, sockaddr(*SERVER_ADDRESS))
-            current_timestamp = datetime.now()
-            with self.lock:
-                self.msgs_to_ack[sent_bytes] = current_timestamp
+    def check_ack(self, ack_segment: RDTSegment):
+        for i in range(self.window_size):
+            if (self.window[i] == ack_segment.ack):
+                self.window[i].ack = True
+        while self.window_size and self.window[0].ack:
+            self.window.pop()
+            self.window_size-=1
 
-    def run(self):
-        sender_thread = threading.Thread(self.handle_user_input())
-        receiver_thread = threading.Thread(self.recv())
-        ack_checker_thread = threading.Thread(self.ack_checker())
+    def check_timeout(self):
+        if (not self.window_size):
+            return
+        if (datetime.now()-self.window[0].time_sent > ACK_WAIT_TIME):
+            self._send(self.window[0].segment, self.window[0].address)
+            self.window[0].time_sent = datetime.now()
+            self.window[0].times_resent += 1
+            if (self.window[0].times_resent > MAX_RETRIES):
+                raise ConnectionError("Connection lost")
+
+        
+
+    # def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
+    #     seq = self.seq
+    #     ack = self.ack
+    #     for _ in range(max_retries + 1):
+    #         try:
+
+    #             bytes_sent = self._send(
+    #                 self._create_segment(data, seq, ack),
+    #                 address,
+    #             )
+
+    #             return bytes_sent
+    #         except TimeoutError:
+    #             continue
+    #     raise ConnectionError("Connection lost")
+
+    # def recv(self):
+    #     while True:
+    #         ack_segment, _ = self.read(1024)
+    #         logging.debug(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
+    #         print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
+
+    #         self.remove_msg(ack_segment)
+
+    # def remove_msg(self, ack_segment):
+    #     with self.lock:
+    #         if ack_segment in self.msgs_to_ack:
+    #             self.msgs_to_ack.remove(ack_segment)
+
+    # def ack_checker(self):
+
+    #     while True:
+    #         closest_to_expire = -1
+    #         with self.lock:
+    #             for ack, time_stamp in self.msgs_to_ack:
+    #                 if (ACK_WAIT_TIME - time_stamp).total_seconds() <= 0:
+    #                     self.send(ack, sockaddr(*SERVER_ADDRESS))
+    #                 elif closest_to_expire == -1 or time_stamp < closest_to_expire:
+    #                     closest_to_expire = time_stamp
+    #         print(
+    #             f"el checker va a dormir {(closest_to_expire - datetime.now()).total_seconds()}"
+    #         )
+    #         time.sleep((closest_to_expire - datetime.now()).total_seconds())
+
+    # def handle_user_input(self):
+    #     while True:
+    #         user_input = input("Write any msg: ").encode()
+    #         print(f"el user escribio: {user_input}")
+    #         if user_input == "fin":
+    #             break
+    #         sent_bytes = self.send(user_input, sockaddr(*SERVER_ADDRESS))
+    #         current_timestamp = datetime.now()
+    #         with self.lock:
+    #             self.msgs_to_ack[sent_bytes] = current_timestamp
+
+    # def run(self):
+    #     sender_thread = threading.Thread(self.handle_user_input())
+    #     receiver_thread = threading.Thread(self.recv())
+    #     ack_checker_thread = threading.Thread(self.ack_checker())
+
+class WindowSlot:
+    def __init__(self, segment, address, ack, time_sent):
+        self.segment = segment
+        self.address = address
+        self.ack = ack
+        self.time_sent = time_sent
+        self.times_resent = 0
