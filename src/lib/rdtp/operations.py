@@ -106,11 +106,16 @@ class UploadOperation:
         # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
         # it's less than the file size
         bytes_read = 0
+        content_read = 0
         chunk_size = min(UPLOAD_CHUNK_SIZE, self.file_size)
         with open(self.filepath, "rb") as file:
             while bytes_read < self.file_size:
-                content = file.read(chunk_size)
-                bytes_read += self.transport.send(content, addr)
+                if (content_read < self.file_size):
+                    content = file.read(chunk_size)
+                    content_read += len(content)
+                    bytes_read += self.transport.send(content, addr)
+                else:
+                    bytes_read += self.transport.update_window()
                 print(f"se enviaron: {bytes_read} con content: {content}")
 
 

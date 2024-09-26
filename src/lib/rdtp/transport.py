@@ -276,6 +276,13 @@ class SelectiveAckTransport(RDTTransport):
         self.check_timeout()
         return bytes_sent
 
+    def update_window(self):
+        bytes_recv = self.recv_ack()
+        
+        self.check_timeout()
+
+        return bytes_recv
+
     def resend(self):
         self.window[0].times_resent += 1
         if (self.window[0].times_resent > MAX_RETRIES):
@@ -292,9 +299,10 @@ class SelectiveAckTransport(RDTTransport):
                 f"Received ack: {ack_segment.ack}, expected ack={self.seq}"
             )
             print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
-            self.check_ack(ack_segment)
+            return self.check_ack(ack_segment)
         except TimeoutError:
             print("No se recibio un ack")
+            return 0
 
     def check_ack(self, ack_segment: RDTSegment):
         print(f"Hay ack: {ack_segment.ack}")
@@ -304,9 +312,12 @@ class SelectiveAckTransport(RDTTransport):
                 print(f"Se recibio ack {ack_segment.ack}")
                 print(f"Se recibio ack {window_slot}")
                 break
+        bytes_recv = 0
         while self.window_size and self.window[0].has_ack:
-            self.window.pop()
+            slot = self.window.pop()
             self.window_size-=1
+            bytes_recv += len(slot.segment.data)
+        return bytes_recv
 
     def check_timeout(self):
         if (not self.window_size):
