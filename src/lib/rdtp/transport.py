@@ -277,11 +277,12 @@ class SelectiveAckTransport(RDTTransport):
         return bytes_sent
 
     def resend(self):
-        self._send(self.window[0].segment, self.window[0].address)
-        self.window[0].time_sent = datetime.now()
         self.window[0].times_resent += 1
         if (self.window[0].times_resent > MAX_RETRIES):
             raise ConnectionError("Connection lost")
+        self._send(self.window[0].segment, self.window[0].address)
+        self.window[0].time_sent = datetime.now()
+        self.check_ack(self.window[0]) 
         
     def recv_ack(self): 
         try:
@@ -312,7 +313,7 @@ class SelectiveAckTransport(RDTTransport):
             return
         if (datetime.now()-self.window[0].time_sent > ACK_WAIT_TIME):
             print("reenvio")
-            self.resend()    
+            self.resend()   
 
     def update_with(self, pkt: RDTSegment):
         print(f"Actualiza con paquete: {pkt} y ack: {self.ack}")
