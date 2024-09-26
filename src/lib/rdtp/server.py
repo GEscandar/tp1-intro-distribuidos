@@ -14,8 +14,10 @@ class ClientOperationHandler:
         self.op = None
         self.handler = None
         self.transport = transport
+        self.addr = None
 
     def _init_handler(self, client_addr: sockaddr, storage_path: Path):
+        self.addr = client_addr
         if self.op.opcode == UploadOperation.opcode:
             self.handler = self.handle_upload(storage_path)
             self.handler.send(None)
@@ -31,6 +33,7 @@ class ClientOperationHandler:
                 client_addr,
                 max_retries=3,
             )
+        
 
     def handle_upload(self, storage_path: Path):
         bytes_written = 0
@@ -41,7 +44,12 @@ class ClientOperationHandler:
         with open(dest, "wb") as f:
             while bytes_written < self.op.file_size:
                 pkt = yield
-                bytes_written += f.write(pkt.data)
+                print(f"A punto de escribir secuencia {pkt.seq} y ack: {self.transport.ack} y seq: {self.transport.seq}")
+                if (pkt.seq == self.transport.ack):
+                    bytes_written += f.write(pkt.data)
+                else:
+                    self.transport.add_to_buff(pkt, self.addr)
+                self.transport.update_with(pkt)
             logging.debug(f"Saving file {dest}")
 
     def handle_download(self, file_size):
@@ -69,6 +77,7 @@ class ClientOperationHandler:
             print(f"Operation data: {pkt.data}")
             self.op = unpack_operation(self.transport, pkt.data)
             print(f"Unpacked operation: {type(self.op)} - {self.op.__dict__}")
+            self.transport.update_with(pkt)
             self._init_handler(addr, storage_path)
             return
 
@@ -123,7 +132,7 @@ class Server:
 
 class FileTransferServer(Server):
     def __init__(
-        self, host: str, port: int, path: Path, transport_factory=RDTTransport
+        self, host: str, port: int, path: Path, transport_factory=SelectiveAckTransport
     ):
         super().__init__(host, port, transport_factory)
         self.chunk_size = max(UPLOAD_CHUNK_SIZE, DOWNLOAD_CHUNK_SIZE)
@@ -150,6 +159,7 @@ class FileTransferServer(Server):
                         if pending:
                             client.transport.send(pending, sockaddr(*addr))
                     pkt, addr = self.transport.read(self.chunk_size)
+                    print(f"Paquete: {pkt}")
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
                     try:

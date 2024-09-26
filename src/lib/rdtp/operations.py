@@ -2,7 +2,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Union
-from .transport import sockaddr, RDTTransport, StopAndWaitTransport, SelectiveAckTransport
+from .transport import sockaddr, RDTTransport, RDTSegment, StopAndWaitTransport, SelectiveAckTransport
 
 UPLOAD_CHUNK_SIZE = 1024
 DOWNLOAD_CHUNK_SIZE = 4096
@@ -98,7 +98,11 @@ class UploadOperation:
 
     def handle(self, addr: sockaddr):
         # tell the server what we're going to do
+        
         self.transport.send(self.get_op_metadata(), addr)
+        while self.transport.get_window_size():
+            self.transport.check_timeout()
+        print("Se envio:D")
         # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
         # it's less than the file size
         bytes_read = 0

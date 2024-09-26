@@ -15,7 +15,7 @@ from .exceptions import ConnectionError
 MAX_RETRIES = 10
 READ_TIMEOUT = 1.0
 DEFAULT_TIMEOUT = 2
-ACK_WAIT_TIME = timedelta(minutes=5)
+ACK_WAIT_TIME = timedelta(seconds=5)
 SACK_WINDOW_SIZE = 5
 
 __all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
@@ -264,15 +264,25 @@ class SelectiveAckTransport(RDTTransport):
             return 0
         
         segment = self._create_segment(data, seq, ack)
+        bytes_sent = self.send_segment(segment, address)
+        return bytes_sent
+            
+    def send_segment(self, segment, address):
         bytes_sent = self._send(segment, address)
-        self.window.append(WindowSlot(segment, address, self.seq, datetime.now()))
-        self.window_size+=1
+        self.add_to_buff(segment, address)
         print(self.window)
         self.recv_ack()
         
         self.check_timeout()
         return bytes_sent
-            
+
+    def resend(self):
+        self._send(self.window[0].segment, self.window[0].address)
+        self.window[0].time_sent = datetime.now()
+        self.window[0].times_resent += 1
+        if (self.window[0].times_resent > MAX_RETRIES):
+            raise ConnectionError("Connection lost")
+        
     def recv_ack(self): 
         try:
             ack_segment, _ = self.read(0)
@@ -301,12 +311,20 @@ class SelectiveAckTransport(RDTTransport):
         if (not self.window_size):
             return
         if (datetime.now()-self.window[0].time_sent > ACK_WAIT_TIME):
-            self._send(self.window[0].segment, self.window[0].address)
-            self.window[0].time_sent = datetime.now()
-            self.window[0].times_resent += 1
-            if (self.window[0].times_resent > MAX_RETRIES):
-                raise ConnectionError("Connection lost")
+            print("reenvio")
+            self.resend()    
 
+    def update_with(self, pkt: RDTSegment):
+        print(f"Actualiza con paquete: {pkt} y ack: {self.ack}")
+        if self.ack == pkt.seq:
+            self.ack += len(pkt.data) 
+
+    def add_to_buff(self, pkt: RDTSegment, address):
+        self.window.append(WindowSlot(pkt, address, self.seq, datetime.now()))
+        self.window_size+=1
+
+    def get_window_size(self):
+        return self.window_size
 
     # lado receiver
     def receive(self, bufsize, max_retries=MAX_RETRIES):
@@ -327,7 +345,6 @@ class SelectiveAckTransport(RDTTransport):
         )
         self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
    
-
     # def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
     #     seq = self.seq
     #     ack = self.ack
