@@ -3,14 +3,8 @@ import socket
 import os
 import sys
 from pathlib import Path
-from .operations import (
-    unpack_operation,
-    UploadOperation,
-    DownloadOperation,
-    UPLOAD_CHUNK_SIZE,
-    DOWNLOAD_CHUNK_SIZE,
-)
-from .transport import RDTTransport, StopAndWaitTransport, RDTSegment, sockaddr
+from .operations import unpack_operation,UploadOperation,DownloadOperation,UPLOAD_CHUNK_SIZE,DOWNLOAD_CHUNK_SIZE
+from .transport import RDTTransport, StopAndWaitTransport, SelectiveAckTransport, RDTSegment, sockaddr
 from .exceptions import ConnectionError
 
 
@@ -102,7 +96,7 @@ class Server:
         pass
 
     def add_client(self, addr: sockaddr):
-        self.clients[addr.as_tuple()] = StopAndWaitTransport(sock=self.transport.sock)
+        self.clients[addr.as_tuple()] = SelectiveAckTransport(sock=self.transport.sock)
 
     def start(self):
         logging.info("Ready to receive connections")
@@ -129,7 +123,7 @@ class Server:
 
 class FileTransferServer(Server):
     def __init__(
-        self, host: str, port: int, path: Path, transport_factory=StopAndWaitTransport
+        self, host: str, port: int, path: Path, transport_factory=RDTTransport
     ):
         super().__init__(host, port, transport_factory)
         self.chunk_size = max(UPLOAD_CHUNK_SIZE, DOWNLOAD_CHUNK_SIZE)
@@ -142,7 +136,7 @@ class FileTransferServer(Server):
 
     def add_client(self, addr: sockaddr):
         self.clients[addr.as_tuple()] = ClientOperationHandler(
-            transport=StopAndWaitTransport(sock=self.transport.sock)
+            transport=SelectiveAckTransport(sock=self.transport.sock)
         )
 
     def start(self):

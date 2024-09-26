@@ -7,11 +7,9 @@ import errno
 from dataclasses import dataclass, astuple
 import threading
 from typing import Union, Tuple
-from rdtp.exceptions import ConnectionError
 from datetime import datetime
 from datetime import timedelta
 
-from server import SERVER_ADDRESS
 from .exceptions import ConnectionError
 
 MAX_RETRIES = 10
@@ -249,8 +247,11 @@ class StopAndWaitTransport(RDTTransport):
 
 
 class SelectiveAckTransport(RDTTransport):
-    def __init__(self):
-        super().__init__()
+    def __init__(self,
+        sock: socket.socket = None,
+        sock_timeout: float = None,
+        read_timeout: float = READ_TIMEOUT):
+        super().__init__(sock, sock_timeout, read_timeout)
         self.lock = threading.Lock()  # Lock for thread safety
         self.window = [] # To store acknowledgment messages
         self.window_size = 0
@@ -264,12 +265,12 @@ class SelectiveAckTransport(RDTTransport):
         
         segment = self._create_segment(data, seq, ack)
         bytes_sent = self._send(segment, address)
-        self.window.append(WindowSlot(segment, address, self.seq, False, datetime.now()))
+        self.window.append(WindowSlot(segment, address, self.seq, datetime.now()))
         self.window_size+=1
-
+        print(self.window)
         self.recv_ack()
         
-        self.check_time_out()
+        self.check_timeout()
         return bytes_sent
             
     def recv_ack(self): 
@@ -285,10 +286,14 @@ class SelectiveAckTransport(RDTTransport):
             print("No se recibio un ack")
 
     def check_ack(self, ack_segment: RDTSegment):
-        for i in range(self.window_size):
-            if (self.window[i] == ack_segment.ack):
-                self.window[i].ack = True
-        while self.window_size and self.window[0].ack:
+        print(f"Hay ack: {ack_segment.ack}")
+        for window_slot in self.window:
+            if (window_slot.ack == ack_segment.ack):
+                window_slot.has_ack = True
+                print(f"Se recibio ack {ack_segment.ack}")
+                print(f"Se recibio ack {window_slot}")
+                break
+        while self.window_size and self.window[0].has_ack:
             self.window.pop()
             self.window_size-=1
 
@@ -302,7 +307,26 @@ class SelectiveAckTransport(RDTTransport):
             if (self.window[0].times_resent > MAX_RETRIES):
                 raise ConnectionError("Connection lost")
 
-        
+
+    # lado receiver
+    def receive(self, bufsize, max_retries=MAX_RETRIES):
+        pkt, addr = self.read(bufsize)
+        self._ack(pkt, addr)
+        if (pkt.seq != self.ack):
+            #paquete desordenado
+            if any([segment.seq == pkt.seq for segment in self.window]):
+                return None, addr
+            self.window.append(WindowRecv(pkt))
+        else:
+            self.ack += len(pkt.data)
+        return pkt, addr
+
+    def _ack(self, pkt: RDTSegment, addr: sockaddr):
+        logging.debug(
+            f"Received packet of length: {len(pkt.data)} seq: {pkt.seq}, expected seq={self.ack}"
+        )
+        self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
+   
 
     # def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
     #     seq = self.seq
@@ -371,3 +395,23 @@ class WindowSlot:
         self.ack = ack
         self.time_sent = time_sent
         self.times_resent = 0
+        self.has_ack = False
+    
+    def __str__(self):
+        return "Slot with ack: {}, times_resent: {} and segment: {}".format(
+            self.ack, self.times_resent, self.segment
+        )
+    def __repr__(self):
+        return str(self)
+    
+class WindowRecv:
+    def __init__(self, segment):
+        self.segment = segment
+        self.seq = segment.seq
+    
+    def __str__(self):
+        return "Slot with segment: {}".format(
+            self.segment
+        )
+    def __repr__(self):
+        return str(self)

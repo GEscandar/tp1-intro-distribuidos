@@ -28,7 +28,7 @@ def simpleTest():
     client = net.get('h2')
 
     port=23457
-    filepath = Path("tests", "files", "small.txt")
+    filepath = Path("tests", "files", "medium_small.txt")
 
     server_command = f"python3 src/server.py -s server_storage -H {server.IP()} -p {port}"
     client_command = f"python3 src/upload.py -s {filepath.absolute()} -n {filepath.name} -q -H {server.IP()} -p {port}"

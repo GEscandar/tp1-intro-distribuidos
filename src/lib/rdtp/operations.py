@@ -2,7 +2,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Union
-from .transport import sockaddr, RDTTransport, StopAndWaitTransport
+from .transport import sockaddr, RDTTransport, StopAndWaitTransport, SelectiveAckTransport
 
 UPLOAD_CHUNK_SIZE = 1024
 DOWNLOAD_CHUNK_SIZE = 4096
@@ -44,9 +44,14 @@ class DownloadOperation:
         logging.debug(f"Got file size of {file_size}, fetching data")
         bytes_written = 0
         with open(self.destination, "wb") as f:
-            while bytes_written < file_size:
-                pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE)
-                bytes_written += f.write(pkt.data)
+            if (isinstance(self.transport, StopAndWaitTransport)):
+                while bytes_written < file_size:
+                    pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE)
+                    bytes_written += f.write(pkt.data)
+            else: 
+                while bytes_written < file_size:
+                    pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE)
+                    bytes_written += f.write(pkt.data)
 
 
 class UploadOperation:
@@ -101,8 +106,8 @@ class UploadOperation:
         with open(self.filepath, "rb") as file:
             while bytes_read < self.file_size:
                 content = file.read(chunk_size)
-                bytes_read += len(content)
-                self.transport.send(content, addr)
+                bytes_read += self.transport.send(content, addr)
+                print(f"se enviaron: {bytes_read} con content: {content}")
 
 
 operations = {
@@ -120,7 +125,7 @@ def unpack_operation(transport: RDTTransport, data: bytes):
 
 def run_operation(opcode: bytes, src: str, host: str, port: int, dest: str):
     addr = sockaddr(host, port)
-    with StopAndWaitTransport() as transport:
+    with SelectiveAckTransport() as transport:
         # create the operation and run it
         op = operations[opcode](transport, src, dest)
         return op.handle(addr)
