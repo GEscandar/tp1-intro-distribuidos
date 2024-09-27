@@ -1,7 +1,8 @@
 from pathlib import Path
 import click
+import logging
 from lib.rdtp.server import FileTransferServer
-from lib.utils import common_options
+from lib.utils import common_options, init_logger
 
 
 @click.command(
@@ -20,10 +21,10 @@ from lib.utils import common_options
 @common_options(host=True)
 @click.pass_context
 def main(ctx: click.Context, storage: Path, verbose: bool, quiet: bool, host:str, port: int):
-    print(f"Starting server at port {port}")
+    init_logger("server.log", verbose, quiet)
+    logging.info(f"Starting server at port {port}")
     addr = ("", port)
     server = FileTransferServer(*addr, storage)
-
     server.start()
 
 

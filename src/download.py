@@ -1,5 +1,5 @@
 import click
-from lib.rdtp.operations import run_operation, UploadOperation
+from lib.rdtp.operations import run_operation, DownloadOperation
 from lib.utils import common_options, init_logger
 
 
@@ -9,12 +9,12 @@ from lib.utils import common_options, init_logger
     no_args_is_help=True,
 )
 @click.option(
-    "-s",
-    "--src",
+    "-d",
+    "--dst",
     type=click.Path(
-        exists=True, file_okay=True, dir_okay=True, readable=True, path_type=str
+        exists=False, file_okay=True, dir_okay=True, readable=True, path_type=str
     ),
-    help="source file path",
+    help="destination file path",
 )
 @click.option(
     "-n",
@@ -25,7 +25,7 @@ from lib.utils import common_options, init_logger
 @click.pass_context
 def main(
     ctx: click.Context,
-    src: str,
+    dst: str,
     name: str,
     verbose: bool,
     quiet: bool,
@@ -33,9 +33,9 @@ def main(
     port: int,
 ):
     
-    print(f"valores: {src} ,{name},{verbose} , {host}, {port}")
-    init_logger("upload.log", verbose, quiet)
-    run_operation(UploadOperation.opcode, src, host, port, name)
+    print(f"valores: {dst} ,{name},{verbose} , {host}, {port}")
+    init_logger("download.log", verbose, quiet)
+    run_operation(DownloadOperation.opcode, name, host, port, dst)
 
 
 if __name__ == "__main__":

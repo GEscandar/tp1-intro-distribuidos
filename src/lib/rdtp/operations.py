@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Union
 from .transport import sockaddr, RDTTransport, StopAndWaitTransport
 
-UPLOAD_CHUNK_SIZE = 1024
+UPLOAD_CHUNK_SIZE = 4096
 DOWNLOAD_CHUNK_SIZE = 4096
 
 
@@ -38,14 +38,15 @@ class DownloadOperation:
     def handle(self, addr: sockaddr):
         logging.info(f"Starting download for file {self.filename}")
         # tell the server what we're going to do
-        self.transport.send(self.get_op_metadata(), addr)
-        resp, _ = self.transport.receive(4)
+        self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
+        resp, _ = self.transport.receive(4, max_retries=100)
         file_size = int.from_bytes(resp.data, sys.byteorder)
         logging.debug(f"Got file size of {file_size}, fetching data")
         bytes_written = 0
         with open(self.destination, "wb") as f:
             while bytes_written < file_size:
-                pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE)
+                pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE, max_retries=100)
+                # data = self.unpack_headers(pkt.data)
                 bytes_written += f.write(pkt.data)
 
 
@@ -93,7 +94,7 @@ class UploadOperation:
 
     def handle(self, addr: sockaddr):
         # tell the server what we're going to do
-        self.transport.send(self.get_op_metadata(), addr)
+        self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
         # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
         # it's less than the file size
         bytes_read = 0
@@ -102,7 +103,8 @@ class UploadOperation:
             while bytes_read < self.file_size:
                 content = file.read(chunk_size)
                 bytes_read += len(content)
-                self.transport.send(content, addr)
+                self.transport.send(content, addr, max_retries=50)
+        logging.debug(f"Finished uploading file {self.filepath.name} to server at {addr}")
 
 
 operations = {
@@ -120,7 +122,7 @@ def unpack_operation(transport: RDTTransport, data: bytes):
 
 def run_operation(opcode: bytes, src: str, host: str, port: int, dest: str):
     addr = sockaddr(host, port)
-    with StopAndWaitTransport() as transport:
+    with StopAndWaitTransport(sock_timeout=0.01) as transport:
         # create the operation and run it
         op = operations[opcode](transport, src, dest)
         return op.handle(addr)
