@@ -29,10 +29,8 @@
 #     client = net.get("h2")
 #     net.start()
 
-#     server_command = (
-#         f"python3 src/server.py -s server_storage -p {port}"
-#     )
-#     client_command = f"python3 src/upload.py -s {filepath.absolute()} -n {filepath.name} -q -H {server.IP()} -p {port}"
+#     server_command = f"venv/bin/python src/server -s server_storage -p {port}"
+#     client_command = f"venv/bin/python src/upload -s {filepath.absolute()} -n {filepath.name} -q -H {server.IP()} -p {port}"
 
 #     logging.info(server_command)
 #     logging.info(client_command)
