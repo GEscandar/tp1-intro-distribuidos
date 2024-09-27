@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Union
 from .transport import sockaddr, RDTTransport, StopAndWaitTransport
 
-UPLOAD_CHUNK_SIZE = 1024
-DOWNLOAD_CHUNK_SIZE = 1024
+UPLOAD_CHUNK_SIZE = 4096
+DOWNLOAD_CHUNK_SIZE = 4096
 
 
 class DownloadOperation:
@@ -94,7 +94,7 @@ class UploadOperation:
 
     def handle(self, addr: sockaddr):
         # tell the server what we're going to do
-        self.transport.send(self.get_op_metadata(), addr, op_metadata=True, max_retries=100)
+        self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
         # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
         # it's less than the file size
         bytes_read = 0
