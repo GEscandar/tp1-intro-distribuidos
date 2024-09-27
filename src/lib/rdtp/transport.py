@@ -34,7 +34,9 @@ class RDTSegment:
     """Size of the segment header in bytes"""
     HEADER_SIZE = SEQ_SIZE * 2 + 1
 
-    def __init__(self, data: bytes = bytes(), seq: int = 0, ack: int = 0, op_metadata = False):
+    def __init__(
+        self, data: bytes = bytes(), seq: int = 0, ack: int = 0, op_metadata=False
+    ):
         self.data = data
         self.seq = seq
         self.ack = ack
@@ -47,8 +49,8 @@ class RDTSegment:
 
         ack = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
         data = data[RDTSegment.SEQ_SIZE :]
-        op_metadata = bool.from_bytes(data[: 1])
-        data = data[1 :]
+        op_metadata = bool.from_bytes(data[:1])
+        data = data[1:]
 
         return RDTSegment(data, seq, ack, op_metadata)
 
@@ -103,7 +105,9 @@ class RDTTransport:
     def _sockfd(self):
         return self.sock.fileno()
 
-    def _create_segment(self, data: bytes = None, seq: int = None, ack: int = None, op_metadata = False):
+    def _create_segment(
+        self, data: bytes = None, seq: int = None, ack: int = None, op_metadata=False
+    ):
         data = data or bytes()
         seq = seq or self.seq
         ack = ack or self.ack
@@ -142,7 +146,9 @@ class RDTTransport:
             self.seq += data_len
         return bytes_sent
 
-    def send(self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES) -> int:
+    def send(
+        self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
+    ) -> int:
         raise NotImplementedError
 
     def _ack(self, pkt: RDTSegment, addr: sockaddr):
@@ -165,7 +171,9 @@ class RDTTransport:
             logging.debug("Retransmission, discarding data")
             pkt.data = bytes()
         ack_pkt = self._create_segment()
-        logging.debug(f"got package with seq={pkt.seq}, length={pkt_len}. sending ACK to {addr}. pkt=[{ack_pkt}]")
+        logging.debug(
+            f"got package with seq={pkt.seq}, length={pkt_len}. sending ACK to {addr}. pkt=[{ack_pkt}]"
+        )
         self._send(ack_pkt, addr)
 
     def read(self, bufsize: int):
@@ -193,7 +201,7 @@ class RDTTransport:
         Receive data through the socket, stripping the headers.
         Emits the corresponding ACK to the sending end.
         """
-        for i in range(max_retries+1):
+        for i in range(max_retries + 1):
             try:
                 pkt, addr = self.read(bufsize)
                 self._ack(pkt, addr)
@@ -203,7 +211,7 @@ class RDTTransport:
             except (TimeoutError, BlockingIOError):
                 if i == max_retries:
                     raise
-                elif (i-1) % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
+                elif (i - 1) % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
                     self.read_timeout *= 2
                 continue
         return pkt, addr
@@ -227,7 +235,9 @@ class RDTTransport:
 
 class StopAndWaitTransport(RDTTransport):
 
-    def send(self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES) -> int:
+    def send(
+        self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
+    ) -> int:
         segment = self._create_segment(data, op_metadata=op_metadata)
         for nattempt in range(max_retries + 1):
             try:
@@ -242,7 +252,7 @@ class StopAndWaitTransport(RDTTransport):
                     f"Received ack: {ack_segment.ack}, expected ack={self.seq}, nattempt={nattempt}"
                 )
                 if ack_segment.ack != self.seq:
-                    if (nattempt-1) % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
+                    if (nattempt - 1) % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
                         # triple retransmission, double read_timeout
                         self.read_timeout *= 2
                     continue

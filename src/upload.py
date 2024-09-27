@@ -32,8 +32,6 @@ def main(
     host: str,
     port: int,
 ):
-    
-    print(f"valores: {src} ,{name},{verbose} , {host}, {port}")
     init_logger("upload.log", verbose, quiet)
     run_operation(UploadOperation.opcode, src, host, port, name)
 

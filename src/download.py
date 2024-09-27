@@ -32,8 +32,6 @@ def main(
     host: str,
     port: int,
 ):
-    
-    print(f"valores: {dst} ,{name},{verbose} , {host}, {port}")
     init_logger("download.log", verbose, quiet)
     run_operation(DownloadOperation.opcode, name, host, port, dst)
 

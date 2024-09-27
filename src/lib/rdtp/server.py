@@ -33,10 +33,7 @@ class ClientOperationHandler:
             self.handler = self.handle_download(file_size, storage_path)
             logging.debug(f"Sending file size of {file_size} to client")
             # send file size to client without waiting too long for the ack
-            self.transport.send(
-                file_size.to_bytes(4, sys.byteorder),
-                client_addr
-            )
+            self.transport.send(file_size.to_bytes(4, sys.byteorder), client_addr)
 
     def handle_upload(self, storage_path: Path):
         bytes_written = 0
@@ -75,7 +72,9 @@ class ClientOperationHandler:
                 # only unpack the first time
                 logging.debug(f"Operation data: {pkt.data}")
                 self.op = unpack_operation(self.transport, pkt.data)
-                logging.debug(f"Unpacked operation: {type(self.op)} - {self.op.__dict__}")
+                logging.debug(
+                    f"Unpacked operation: {type(self.op)} - {self.op.__dict__}"
+                )
                 self._init_handler(addr, storage_path)
             return
 

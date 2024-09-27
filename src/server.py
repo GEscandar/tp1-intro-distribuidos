@@ -20,7 +20,9 @@ from lib.utils import common_options, init_logger
 )
 @common_options(host=True)
 @click.pass_context
-def main(ctx: click.Context, storage: Path, verbose: bool, quiet: bool, host:str, port: int):
+def main(
+    ctx: click.Context, storage: Path, verbose: bool, quiet: bool, host: str, port: int
+):
     init_logger("server.log", verbose, quiet)
     logging.info(f"Starting server at port {port}")
     addr = ("", port)

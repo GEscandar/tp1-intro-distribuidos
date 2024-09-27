@@ -104,7 +104,9 @@ class UploadOperation:
                 content = file.read(chunk_size)
                 bytes_read += len(content)
                 self.transport.send(content, addr, max_retries=50)
-        logging.debug(f"Finished uploading file {self.filepath.name} to server at {addr}")
+        logging.debug(
+            f"Finished uploading file {self.filepath.name} to server at {addr}"
+        )
 
 
 operations = {
