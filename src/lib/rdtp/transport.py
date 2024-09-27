@@ -16,7 +16,7 @@ MAX_RETRIES = 10
 READ_TIMEOUT = 1.0
 DEFAULT_TIMEOUT = 2
 ACK_WAIT_TIME = timedelta(seconds=5)
-SACK_WINDOW_SIZE = 5
+SACK_WINDOW_SIZE = 60
 
 __all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
 
@@ -116,7 +116,6 @@ class RDTTransport:
         bytes_sent = 0
         while bytes_sent < amount:
             bytes_sent += self.sock.sendto(data[bytes_sent:], address)
-            print(f"Sent {bytes_sent} out of a total of {amount}")
         return bytes_sent
 
     def _send(self, segment: RDTSegment, address: sockaddr) -> int:
@@ -138,12 +137,12 @@ class RDTTransport:
 
         # bytes_sent = self.sock.sendto(data, address.as_tuple())
         bytes_sent = self.send_all(data, len(data), address.as_tuple())
-        logging.debug(
-            f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
-        )
-        print(
-            f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
-        )
+        # logging.debug(
+        #     f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
+        # )
+        # print(
+        #     f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
+        # )
         if self.seq == segment.seq:
             # After sending, increment the seq number if this is not a retransmission
             self.seq += data_len
@@ -270,12 +269,14 @@ class SelectiveAckTransport(RDTTransport):
     def send_segment(self, segment, address):
         bytes_sent = self._send(segment, address)
         self.add_to_buff(segment, address)
-        print(self.window)
         self.recv_ack()
         
         self.check_timeout()
         return bytes_sent
 
+    def has_full_window(self):
+        print(f"Window: {self.window_size} and max is:{SACK_WINDOW_SIZE} ")
+        return self.window_size == SACK_WINDOW_SIZE
     def update_window(self):
         bytes_recv = self.recv_ack()
         
@@ -327,9 +328,24 @@ class SelectiveAckTransport(RDTTransport):
             self.resend()   
 
     def update_with(self, pkt: RDTSegment):
-        print(f"Actualiza con paquete: {pkt} y ack: {self.ack}")
         if self.ack == pkt.seq:
             self.ack += len(pkt.data) 
+
+    def get_data_from_queue(self) -> bytes:
+        data_from_queue = bytes()
+        for i in range(self.window_size):
+            if (not self.window_size):
+                break
+            for slot in self.window:
+                print(f"checking slot seq: {slot.segment.seq} - ack: {self.ack} ")
+                if (slot.segment.seq == self.ack):
+                    data_from_queue += slot.segment.data
+                    self.ack += len(slot.segment.data) 
+                    self.window.pop()
+                    self.window_size-=1
+                    break
+        return data_from_queue
+
 
     def add_to_buff(self, pkt: RDTSegment, address):
         self.window.append(WindowSlot(pkt, address, self.seq, datetime.now()))

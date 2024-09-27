@@ -33,7 +33,6 @@ class ClientOperationHandler:
                 client_addr,
                 max_retries=3,
             )
-        
 
     def handle_upload(self, storage_path: Path):
         bytes_written = 0
@@ -44,12 +43,19 @@ class ClientOperationHandler:
         with open(dest, "wb") as f:
             while bytes_written < self.op.file_size:
                 pkt = yield
-                print(f"A punto de escribir secuencia {pkt.seq} y ack: {self.transport.ack} y seq: {self.transport.seq}")
+                print(f"A punto de escribir secuencia {pkt.seq} y ack: {self.transport.ack}")
                 if (pkt.seq == self.transport.ack):
                     bytes_written += f.write(pkt.data)
+                    self.transport.update_with(pkt)
+                    data_from_queue = self.transport.get_data_from_queue()
+                    print(f"bites written: {bytes_written}")
+                    if (data_from_queue):
+                        bytes_written += f.write(data_from_queue)
+                        print(f"bites written from queue: {bytes_written}")
                 else:
+                    print(f"Se agrega a cola: {pkt.seq}")
                     self.transport.add_to_buff(pkt, self.addr)
-                self.transport.update_with(pkt)
+                
             logging.debug(f"Saving file {dest}")
 
     def handle_download(self, file_size):
@@ -159,7 +165,6 @@ class FileTransferServer(Server):
                         if pending:
                             client.transport.send(pending, sockaddr(*addr))
                     pkt, addr = self.transport.read(self.chunk_size)
-                    print(f"Paquete: {pkt}")
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
                     try:

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Union
 from .transport import sockaddr, RDTTransport, RDTSegment, StopAndWaitTransport, SelectiveAckTransport
 
-UPLOAD_CHUNK_SIZE = 1024
+UPLOAD_CHUNK_SIZE = 4096
 DOWNLOAD_CHUNK_SIZE = 4096
 
 
@@ -101,22 +101,24 @@ class UploadOperation:
         
         self.transport.send(self.get_op_metadata(), addr)
         while self.transport.get_window_size():
-            self.transport.check_timeout()
+            self.transport.update_window()
         print("Se envio:D")
         # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
         # it's less than the file size
         bytes_read = 0
+        full_window = False
         content_read = 0
         chunk_size = min(UPLOAD_CHUNK_SIZE, self.file_size)
         with open(self.filepath, "rb") as file:
             while bytes_read < self.file_size:
-                if (content_read < self.file_size):
+                if (not self.transport.has_full_window() and content_read < self.file_size):
                     content = file.read(chunk_size)
                     content_read += len(content)
                     bytes_read += self.transport.send(content, addr)
                 else:
                     bytes_read += self.transport.update_window()
-                print(f"se enviaron: {bytes_read} con content: {content}")
+                full_window = bytes_read == 0
+                # print(f"se enviaron: {bytes_read} con content: {content}")
 
 
 operations = {
