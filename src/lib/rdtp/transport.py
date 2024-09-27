@@ -7,7 +7,8 @@ from dataclasses import dataclass, astuple
 from .exceptions import ConnectionError
 
 MAX_RETRIES = 100
-READ_TIMEOUT = 1.0
+MAX_READ_TIMEOUT = 1.0
+MIN_READ_TIMEOUT = 0.01
 DEFAULT_TIMEOUT = 2
 
 __all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
@@ -78,7 +79,7 @@ class RDTTransport:
         self,
         sock: socket.socket = None,
         sock_timeout: float = None,
-        read_timeout: float = READ_TIMEOUT,
+        read_timeout: float = MIN_READ_TIMEOUT,
     ) -> None:
         if not sock:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -202,7 +203,7 @@ class RDTTransport:
             except (TimeoutError, BlockingIOError):
                 if i == max_retries:
                     raise
-                elif (i-1) % 3 == 0 and self.read_timeout < 1:
+                elif (i-1) % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
                     self.read_timeout *= 2
                 continue
         return pkt, addr
@@ -241,11 +242,11 @@ class StopAndWaitTransport(RDTTransport):
                     f"Received ack: {ack_segment.ack}, expected ack={self.seq}, nattempt={nattempt}"
                 )
                 if ack_segment.ack != self.seq:
-                    if (nattempt-1) % 3 == 0 and self.read_timeout < 1:
+                    if (nattempt-1) % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
                         # triple retransmission, double read_timeout
                         self.read_timeout *= 2
                     continue
-                elif nattempt < 4 and self.read_timeout > 0.01:
+                elif nattempt < 4 and self.read_timeout > MIN_READ_TIMEOUT:
                     self.read_timeout /= 2
                 # self.ack += len(data)
                 return bytes_sent

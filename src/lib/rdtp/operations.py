@@ -122,7 +122,7 @@ def unpack_operation(transport: RDTTransport, data: bytes):
 
 def run_operation(opcode: bytes, src: str, host: str, port: int, dest: str):
     addr = sockaddr(host, port)
-    with StopAndWaitTransport(sock_timeout=0.01, read_timeout=0.01) as transport:
+    with StopAndWaitTransport(sock_timeout=0.01) as transport:
         # create the operation and run it
         op = operations[opcode](transport, src, dest)
         return op.handle(addr)
