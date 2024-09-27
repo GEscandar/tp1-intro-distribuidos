@@ -22,36 +22,36 @@ class ClientOperationHandler:
         self.transport = transport
 
     def _init_handler(self, client_addr: sockaddr, storage_path: Path):
+        if not os.path.exists(storage_path):
+            os.makedirs(storage_path)
         if self.op.opcode == UploadOperation.opcode:
             self.handler = self.handle_upload(storage_path)
             self.handler.send(None)
         elif self.op.opcode == DownloadOperation.opcode:
+            self.op.filename = str(Path(storage_path, self.op.filename))
             file_size = os.stat(self.op.filename).st_size
-            print("file size: ", file_size)
-            self.handler = self.handle_download(file_size)
-            print("Sending file size to client")
-            logging.debug("Sending file size to client")
+            self.handler = self.handle_download(file_size, storage_path)
+            logging.debug(f"Sending file size of {file_size} to client")
             # send file size to client without waiting too long for the ack
             self.transport.send(
                 file_size.to_bytes(4, sys.byteorder),
-                client_addr,
-                max_retries=3,
+                client_addr
             )
 
     def handle_upload(self, storage_path: Path):
         bytes_written = 0
-
-        if not os.path.exists(storage_path):
-            os.makedirs(storage_path)
         dest = Path(storage_path, self.op.destination)
+        logging.info(f"Starting upload of file at {dest}")
         with open(dest, "wb") as f:
             while bytes_written < self.op.file_size:
                 pkt = yield
+                logging.debug(f"Writing packet {pkt} to file")
                 bytes_written += f.write(pkt.data)
-            logging.debug(f"Saving file {dest}")
+            logging.info(f"Upload end, saving file {dest}")
 
-    def handle_download(self, file_size):
+    def handle_download(self, file_size, storage_path: Path):
         bytes_read = 0
+        logging.info(f"Starting download of file at {self.op.filename}")
         # chunk_size = DOWNLOAD_CHUNK_SIZE - RDTSegment.HEADER_SIZE
         chunk_size = DOWNLOAD_CHUNK_SIZE
         with open(self.op.filename, "rb") as f:
@@ -71,11 +71,12 @@ class ClientOperationHandler:
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr, storage_path: Path):
         if not self.op:
-            # only unpack the first time
-            print(f"Operation data: {pkt.data}")
-            self.op = unpack_operation(self.transport, pkt.data)
-            print(f"Unpacked operation: {type(self.op)} - {self.op.__dict__}")
-            self._init_handler(addr, storage_path)
+            if pkt.op_metadata:
+                # only unpack the first time
+                logging.debug(f"Operation data: {pkt.data}")
+                self.op = unpack_operation(self.transport, pkt.data)
+                logging.debug(f"Unpacked operation: {type(self.op)} - {self.op.__dict__}")
+                self._init_handler(addr, storage_path)
             return
 
         if self.op.opcode == UploadOperation.opcode:
@@ -146,7 +147,7 @@ class FileTransferServer(Server):
         )
 
     def start(self):
-        logging.info("Ready to receive connections")
+        logging.info("Listening for incoming connections")
         try:
             while True:
                 try:
@@ -160,7 +161,8 @@ class FileTransferServer(Server):
                         self.add_client(addr)
                     try:
                         self.on_receive(pkt, addr)
-                    except:
+                    except Exception as e:
+                        logging.error(f"Error {e}, removing client")
                         self.clients.pop(addr.as_tuple())
                 except BlockingIOError:
                     continue
