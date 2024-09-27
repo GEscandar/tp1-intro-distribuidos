@@ -12,8 +12,9 @@ from datetime import timedelta
 
 from .exceptions import ConnectionError
 
-MAX_RETRIES = 10
-READ_TIMEOUT = 1.0
+MAX_RETRIES = 100
+MAX_READ_TIMEOUT = 1.0
+MIN_READ_TIMEOUT = 0.01
 DEFAULT_TIMEOUT = 2
 ACK_WAIT_TIME = timedelta(seconds=5)
 SACK_WINDOW_SIZE = 60
@@ -39,12 +40,15 @@ class RDTSegment:
     SEQ_SIZE = 4
 
     """Size of the segment header in bytes"""
-    HEADER_SIZE = SEQ_SIZE * 2
+    HEADER_SIZE = SEQ_SIZE * 2 + 1
 
-    def __init__(self, data: bytes = bytes(), seq: int = 0, ack: int = 0):
+    def __init__(
+        self, data: bytes = bytes(), seq: int = 0, ack: int = 0, op_metadata=False
+    ):
         self.data = data
         self.seq = seq
         self.ack = ack
+        self.op_metadata = op_metadata
 
     @staticmethod
     def unpack(data: bytes):
@@ -53,12 +57,15 @@ class RDTSegment:
 
         ack = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
         data = data[RDTSegment.SEQ_SIZE :]
+        op_metadata = bool.from_bytes(data[:1])
+        data = data[1:]
 
-        return RDTSegment(data, seq, ack)
+        return RDTSegment(data, seq, ack, op_metadata)
 
     def to_bytes(self):
         res = self.seq.to_bytes(RDTSegment.SEQ_SIZE, byteorder=sys.byteorder)
         res += self.ack.to_bytes(RDTSegment.SEQ_SIZE, byteorder=sys.byteorder)
+        res += self.op_metadata.to_bytes(byteorder=sys.byteorder)
         res += self.data
         return res
 
@@ -82,7 +89,7 @@ class RDTTransport:
         self,
         sock: socket.socket = None,
         sock_timeout: float = None,
-        read_timeout: float = READ_TIMEOUT,
+        read_timeout: float = MIN_READ_TIMEOUT,
     ) -> None:
         if not sock:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -106,11 +113,13 @@ class RDTTransport:
     def _sockfd(self):
         return self.sock.fileno()
 
-    def _create_segment(self, data: bytes = None, seq: int = None, ack: int = None):
+    def _create_segment(
+        self, data: bytes = None, seq: int = None, ack: int = None, op_metadata=False
+    ):
         data = data or bytes()
         seq = seq or self.seq
         ack = ack or self.ack
-        return RDTSegment(data=data, seq=seq, ack=ack)
+        return RDTSegment(data=data, seq=seq, ack=ack, op_metadata=op_metadata)
 
     def send_all(self, data: bytes, amount: int, address: sockaddr):
         bytes_sent = 0
@@ -135,20 +144,19 @@ class RDTTransport:
         except TypeError as e:
             raise ValueError(f"Error converting data to bytes: {e}")
 
-        # bytes_sent = self.sock.sendto(data, address.as_tuple())
-        bytes_sent = self.send_all(data, len(data), address.as_tuple())
-        # logging.debug(
-        #     f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
-        # )
-        # print(
-        #     f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
-        # )
+        bytes_sent = self.sock.sendto(data, address.as_tuple())
+        # bytes_sent = self.send_all(data, len(data), address.as_tuple())
+        logging.debug(
+            f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
+        )
         if self.seq == segment.seq:
             # After sending, increment the seq number if this is not a retransmission
             self.seq += data_len
         return bytes_sent
 
-    def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
+    def send(
+        self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
+    ) -> int:
         raise NotImplementedError
 
     def _ack(self, pkt: RDTSegment, addr: sockaddr):
@@ -158,20 +166,23 @@ class RDTTransport:
             pkt (RDTSegment): The received packet
             addr (sockaddr): Peer address
         """
+        pkt_len = len(pkt.data)
         logging.debug(
-            f"Received packet of length: {len(pkt.data)} seq: {pkt.seq}, expected seq={self.ack}"
+            f"Received packet of length: {pkt_len} seq: {pkt.seq}, expected seq={self.ack}"
         )
         if pkt.seq == self.ack:
             if pkt.data:
-                # got a non-empty data packet, send ack
-                self.ack += len(pkt.data)
-                ack_pkt = self._create_segment()
-                logging.debug(f"got package. sending ACK. pkt=[{ack_pkt}]")
-                print(f"got package. sending ACK to {addr}. pkt=[{ack_pkt}]")
-                self._send(ack_pkt, addr)
+                # got a non-empty data packet, increase ack number by the packet's length
+                self.ack += pkt_len
         elif pkt.seq < self.ack:
-            # retransmission, resend ack
-            self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
+            # retransmission, don't return duplicate data to the receiving end
+            logging.debug("Retransmission, discarding data")
+            pkt.data = bytes()
+        ack_pkt = self._create_segment()
+        logging.debug(
+            f"got package with seq={pkt.seq}, length={pkt_len}. sending ACK to {addr}. pkt=[{ack_pkt}]"
+        )
+        self._send(ack_pkt, addr)
 
     def read(self, bufsize: int):
         if not self.closed:
@@ -193,13 +204,24 @@ class RDTTransport:
             return RDTSegment.unpack(data), sockaddr(*addr)
         raise ConnectionError("Socket closed")
 
-    def receive(self, bufsize, max_retries=MAX_RETRIES):
+    def receive(self, bufsize, max_retries=0):
         """
         Receive data through the socket, stripping the headers.
         Emits the corresponding ACK to the sending end.
         """
-        pkt, addr = self.read(bufsize)
-        self._ack(pkt, addr)
+        for i in range(max_retries + 1):
+            try:
+                pkt, addr = self.read(bufsize)
+                self._ack(pkt, addr)
+                if i < 4 and self.read_timeout > MIN_READ_TIMEOUT:
+                    self.read_timeout /= 2
+                break
+            except (TimeoutError, BlockingIOError):
+                if i == max_retries:
+                    raise
+                elif i % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
+                    self.read_timeout *= 2
+                continue
         return pkt, addr
 
     def close(self, wait=False):
@@ -221,57 +243,63 @@ class RDTTransport:
 
 class StopAndWaitTransport(RDTTransport):
 
-    def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
-        seq = self.seq
-        ack = self.ack
-        for _ in range(max_retries + 1):
+    def send(
+        self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
+    ) -> int:
+        segment = self._create_segment(data, op_metadata=op_metadata)
+        for nattempt in range(max_retries + 1):
             try:
-
                 bytes_sent = self._send(
-                    self._create_segment(data, seq, ack),
+                    segment,
                     address,
                 )
+                logging.debug("Waiting for ack...")
                 ack_segment, _ = self.read(0)
                 logging.debug(
-                    f"Received ack: {ack_segment.ack}, expected ack={self.seq}"
+                    f"Received ack: {ack_segment.ack}, expected ack={self.seq}, nattempt={nattempt}"
                 )
-                print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
                 if ack_segment.ack != self.seq:
+                    if (nattempt - 1) % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
+                        # triple retransmission, double read_timeout
+                        self.read_timeout *= 2
                     continue
-                # self.ack += len(data)
+                elif nattempt < 4 and self.read_timeout > MIN_READ_TIMEOUT:
+                    self.read_timeout /= 2
                 return bytes_sent
-            except TimeoutError:
+            except (TimeoutError, BlockingIOError):
                 continue
         raise ConnectionError("Connection lost")
 
 
 class SelectiveAckTransport(RDTTransport):
-    def __init__(self,
+    def __init__(
+        self,
         sock: socket.socket = None,
         sock_timeout: float = None,
-        read_timeout: float = READ_TIMEOUT):
+        read_timeout: float = MIN_READ_TIMEOUT,
+    ):
         super().__init__(sock, sock_timeout, read_timeout)
         self.lock = threading.Lock()  # Lock for thread safety
-        self.window = [] # To store acknowledgment messages
+        self.window = []  # To store acknowledgment messages
         self.window_size = 0
 
     def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
         seq = self.seq
         ack = self.ack
         if self.window_size > SACK_WINDOW_SIZE:
-            self.recv_ack() # Can't send if the window is full
+            self.recv_ack()  # Can't send if the window is full
             return 0
-        
+
         segment = self._create_segment(data, seq, ack)
         bytes_sent = self.send_segment(segment, address)
         return bytes_sent
-            
+
     def send_segment(self, segment, address):
         print(f"sending with seq: {segment.seq}")
         bytes_sent = self._send(segment, address)
         self.add_to_buff(segment, address)
         self.recv_ack()
-        
+
         self.check_timeout()
         return bytes_sent
 
@@ -279,28 +307,27 @@ class SelectiveAckTransport(RDTTransport):
         print(f"Window: {self.window_size} and max is:{SACK_WINDOW_SIZE} ")
         print(self.window)
         return self.window_size == SACK_WINDOW_SIZE
+
     def update_window(self):
         bytes_recv = self.recv_ack()
-        
+
         self.check_timeout()
 
         return bytes_recv
 
     def resend(self):
         self.window[0].times_resent += 1
-        if (self.window[0].times_resent > MAX_RETRIES):
+        if self.window[0].times_resent > MAX_RETRIES:
             raise ConnectionError("Connection lost")
         self._send(self.window[0].segment, self.window[0].address)
         self.window[0].time_sent = datetime.now()
-        self.recv_ack() 
-        
-    def recv_ack(self): 
+        self.recv_ack()
+
+    def recv_ack(self):
         try:
             ack_segment, _ = self.read(0)
 
-            logging.debug(
-                f"Received ack: {ack_segment.ack}, expected ack={self.seq}"
-            )
+            logging.debug(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
             print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
             return self.check_ack(ack_segment)
         except TimeoutError:
@@ -310,50 +337,49 @@ class SelectiveAckTransport(RDTTransport):
     def check_ack(self, ack_segment: RDTSegment):
         print(f"Hay ack: {ack_segment.ack}")
         for window_slot in self.window:
-            if (window_slot.ack == ack_segment.ack):
+            if window_slot.ack == ack_segment.ack:
                 window_slot.has_ack = True
                 print(f"Se recibio ack {window_slot}")
                 break
         bytes_recv = 0
-        while self.window_size and self.window[0].has_ack==True:
+        while self.window_size and self.window[0].has_ack == True:
             slot = self.window.pop(0)
-            self.window_size-=1
+            self.window_size -= 1
             bytes_recv += len(slot.segment.data)
         return bytes_recv
 
     def check_timeout(self):
-        if (not self.window_size):
+        if not self.window_size:
             return
-        if (datetime.now()-self.window[0].time_sent > ACK_WAIT_TIME):
+        if datetime.now() - self.window[0].time_sent > ACK_WAIT_TIME:
             print(f"reenvio {self.window[0].segment.seq}")
-            self.resend()   
+            self.resend()
 
     def update_with(self, pkt: RDTSegment):
         if self.ack == pkt.seq:
-            self.ack += len(pkt.data) 
+            self.ack += len(pkt.data)
 
     def get_data_from_queue(self) -> bytes:
         data_from_queue = bytes()
         print(self.window)
         for i in range(self.window_size):
-            if (not self.window_size):
+            if not self.window_size:
                 break
             for i, slot in enumerate(self.window):
-                if (slot.segment.seq == self.ack):
+                if slot.segment.seq == self.ack:
                     data_from_queue += slot.segment.data
-                    self.ack += len(slot.segment.data) 
+                    self.ack += len(slot.segment.data)
                     self.window.pop(i)
-                    self.window_size-=1
+                    self.window_size -= 1
                     break
         return data_from_queue
 
-
     def add_to_buff(self, pkt: RDTSegment, address):
-        if (pkt.seq < self.ack):
-            #ya se escribio, remandar ack por las dudas
+        if pkt.seq < self.ack:
+            # ya se escribio, remandar ack por las dudas
             self._ack(pkt)
         self.window.append(WindowSlot(pkt, address, self.seq, datetime.now()))
-        self.window_size+=1
+        self.window_size += 1
 
     def get_window_size(self):
         return self.window_size
@@ -362,8 +388,8 @@ class SelectiveAckTransport(RDTTransport):
     def receive(self, bufsize, max_retries=MAX_RETRIES):
         pkt, addr = self.read(bufsize)
         self._ack(pkt, addr)
-        if (pkt.seq != self.ack):
-            #paquete desordenado
+        if pkt.seq != self.ack:
+            # paquete desordenado
             if any([segment.seq == pkt.seq for segment in self.window]):
                 return None, addr
             self.window.append(WindowRecv(pkt))
@@ -376,7 +402,7 @@ class SelectiveAckTransport(RDTTransport):
             f"Received packet of length: {len(pkt.data)} seq: {pkt.seq}, expected seq={self.ack}"
         )
         self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
-   
+
     # def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
     #     seq = self.seq
     #     ack = self.ack
@@ -437,6 +463,7 @@ class SelectiveAckTransport(RDTTransport):
     #     receiver_thread = threading.Thread(self.recv())
     #     ack_checker_thread = threading.Thread(self.ack_checker())
 
+
 class WindowSlot:
     def __init__(self, segment, address, ack, time_sent):
         self.segment = segment
@@ -445,22 +472,23 @@ class WindowSlot:
         self.time_sent = time_sent
         self.times_resent = 0
         self.has_ack = False
-    
+
     def __str__(self):
         return "Slot with seq: {} and is recv: {}".format(
             self.segment.seq, self.has_ack
         )
+
     def __repr__(self):
         return str(self)
-    
+
+
 class WindowRecv:
     def __init__(self, segment):
         self.segment = segment
         self.seq = segment.seq
-    
+
     def __str__(self):
-        return "Slot with seq: {}".format(
-            self.seq
-        )
+        return "Slot with seq: {}".format(self.seq)
+
     def __repr__(self):
         return str(self)
