@@ -267,6 +267,7 @@ class SelectiveAckTransport(RDTTransport):
         return bytes_sent
             
     def send_segment(self, segment, address):
+        print(f"sending with seq: {segment.seq}")
         bytes_sent = self._send(segment, address)
         self.add_to_buff(segment, address)
         self.recv_ack()
@@ -276,6 +277,7 @@ class SelectiveAckTransport(RDTTransport):
 
     def has_full_window(self):
         print(f"Window: {self.window_size} and max is:{SACK_WINDOW_SIZE} ")
+        print(self.window)
         return self.window_size == SACK_WINDOW_SIZE
     def update_window(self):
         bytes_recv = self.recv_ack()
@@ -290,7 +292,7 @@ class SelectiveAckTransport(RDTTransport):
             raise ConnectionError("Connection lost")
         self._send(self.window[0].segment, self.window[0].address)
         self.window[0].time_sent = datetime.now()
-        self.check_ack(self.window[0]) 
+        self.recv_ack() 
         
     def recv_ack(self): 
         try:
@@ -310,12 +312,11 @@ class SelectiveAckTransport(RDTTransport):
         for window_slot in self.window:
             if (window_slot.ack == ack_segment.ack):
                 window_slot.has_ack = True
-                print(f"Se recibio ack {ack_segment.ack}")
                 print(f"Se recibio ack {window_slot}")
                 break
         bytes_recv = 0
-        while self.window_size and self.window[0].has_ack:
-            slot = self.window.pop()
+        while self.window_size and self.window[0].has_ack==True:
+            slot = self.window.pop(0)
             self.window_size-=1
             bytes_recv += len(slot.segment.data)
         return bytes_recv
@@ -324,7 +325,7 @@ class SelectiveAckTransport(RDTTransport):
         if (not self.window_size):
             return
         if (datetime.now()-self.window[0].time_sent > ACK_WAIT_TIME):
-            print("reenvio")
+            print(f"reenvio {self.window[0].segment.seq}")
             self.resend()   
 
     def update_with(self, pkt: RDTSegment):
@@ -333,21 +334,24 @@ class SelectiveAckTransport(RDTTransport):
 
     def get_data_from_queue(self) -> bytes:
         data_from_queue = bytes()
+        print(self.window)
         for i in range(self.window_size):
             if (not self.window_size):
                 break
-            for slot in self.window:
-                print(f"checking slot seq: {slot.segment.seq} - ack: {self.ack} ")
+            for i, slot in enumerate(self.window):
                 if (slot.segment.seq == self.ack):
                     data_from_queue += slot.segment.data
                     self.ack += len(slot.segment.data) 
-                    self.window.pop()
+                    self.window.pop(i)
                     self.window_size-=1
                     break
         return data_from_queue
 
 
     def add_to_buff(self, pkt: RDTSegment, address):
+        if (pkt.seq < self.ack):
+            #ya se escribio, remandar ack por las dudas
+            self._ack(pkt)
         self.window.append(WindowSlot(pkt, address, self.seq, datetime.now()))
         self.window_size+=1
 
@@ -443,8 +447,8 @@ class WindowSlot:
         self.has_ack = False
     
     def __str__(self):
-        return "Slot with ack: {}, times_resent: {} and segment: {}".format(
-            self.ack, self.times_resent, self.segment
+        return "Slot with seq: {} and is recv: {}".format(
+            self.segment.seq, self.has_ack
         )
     def __repr__(self):
         return str(self)
@@ -455,8 +459,8 @@ class WindowRecv:
         self.seq = segment.seq
     
     def __str__(self):
-        return "Slot with segment: {}".format(
-            self.segment
+        return "Slot with seq: {}".format(
+            self.seq
         )
     def __repr__(self):
         return str(self)

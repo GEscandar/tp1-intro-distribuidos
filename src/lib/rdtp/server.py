@@ -47,14 +47,14 @@ class ClientOperationHandler:
                 if (pkt.seq == self.transport.ack):
                     bytes_written += f.write(pkt.data)
                     self.transport.update_with(pkt)
-                    data_from_queue = self.transport.get_data_from_queue()
                     print(f"bites written: {bytes_written}")
-                    if (data_from_queue):
-                        bytes_written += f.write(data_from_queue)
-                        print(f"bites written from queue: {bytes_written}")
                 else:
                     print(f"Se agrega a cola: {pkt.seq}")
                     self.transport.add_to_buff(pkt, self.addr)
+                data_from_queue = self.transport.get_data_from_queue()
+                if (data_from_queue):
+                    bytes_written += f.write(data_from_queue)
+                    print(f"bites written from queue: {bytes_written}")
                 
             logging.debug(f"Saving file {dest}")
 
@@ -80,7 +80,7 @@ class ClientOperationHandler:
     def on_receive(self, pkt: RDTSegment, addr: sockaddr, storage_path: Path):
         if not self.op:
             # only unpack the first time
-            print(f"Operation data: {pkt.data}")
+            print(f"Operation data")
             self.op = unpack_operation(self.transport, pkt.data)
             print(f"Unpacked operation: {type(self.op)} - {self.op.__dict__}")
             self.transport.update_with(pkt)
