@@ -10,14 +10,10 @@ from .operations import (
     UPLOAD_CHUNK_SIZE,
     DOWNLOAD_CHUNK_SIZE,
 )
-from .transport import (
-    RDTTransport,
-    StopAndWaitTransport,
-    SelectiveAckTransport,
-    RDTSegment,
-    sockaddr,
-)
+from .transport import RDTTransport, StopAndWaitTransport, RDTSegment, sockaddr
 from .exceptions import ConnectionError
+
+SERVER_READ_TIMEOUT = 0
 
 
 class ClientOperationHandler:
@@ -26,7 +22,6 @@ class ClientOperationHandler:
         self.op = None
         self.handler = None
         self.transport = transport
-        self.addr = None
 
     def _init_handler(self, client_addr: sockaddr, storage_path: Path):
         if not os.path.exists(storage_path):
@@ -103,13 +98,16 @@ class Server:
         sock.bind(self.address.as_tuple())
         # we don't want this to block on read or write operations, so
         # set both timeouts to 0 or as close to it as possible
-        self.transport = transport_factory(sock, sock_timeout=0, read_timeout=0)
+        self.transport_factory = transport_factory
+        self.transport = transport_factory(
+            sock, sock_timeout=0, read_timeout=SERVER_READ_TIMEOUT
+        )
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         pass
 
     def add_client(self, addr: sockaddr):
-        self.clients[addr.as_tuple()] = SelectiveAckTransport(sock=self.transport.sock)
+        self.clients[addr.as_tuple()] = self.transport_factory(sock=self.transport.sock)
 
     def start(self):
         logging.info("Ready to receive connections")
@@ -120,7 +118,7 @@ class Server:
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
                     self.on_receive(pkt, addr)
-                except BlockingIOError:
+                except (TimeoutError, BlockingIOError):
                     continue
                 except ConnectionError:
                     break
@@ -136,7 +134,7 @@ class Server:
 
 class FileTransferServer(Server):
     def __init__(
-        self, host: str, port: int, path: Path, transport_factory=SelectiveAckTransport
+        self, host: str, port: int, path: Path, transport_factory=StopAndWaitTransport
     ):
         super().__init__(host, port, transport_factory)
         self.chunk_size = max(UPLOAD_CHUNK_SIZE, DOWNLOAD_CHUNK_SIZE)
@@ -149,7 +147,7 @@ class FileTransferServer(Server):
 
     def add_client(self, addr: sockaddr):
         self.clients[addr.as_tuple()] = ClientOperationHandler(
-            transport=SelectiveAckTransport(sock=self.transport.sock)
+            transport=self.transport_factory(sock=self.transport.sock)
         )
 
     def start(self):
@@ -162,15 +160,21 @@ class FileTransferServer(Server):
                         pending = client.get_pending()
                         if pending:
                             client.transport.send(pending, sockaddr(*addr))
-                    pkt, addr = self.transport.read(self.chunk_size)
+                    # pkt, addr = self.transport.read(self.chunk_size)
+                    if self.clients:
+                        for client in self.clients.values():
+                            pkt, addr = client.transport.read(self.chunk_size)
+                            break
+                    else:
+                        pkt, addr = self.transport.read(self.chunk_size)
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
-                    try:
-                        self.on_receive(pkt, addr)
-                    except Exception as e:
-                        logging.error(f"Error {e}, removing client")
-                        self.clients.pop(addr.as_tuple())
-                except BlockingIOError:
+                    # try:
+                    self.on_receive(pkt, addr)
+                    # except Exception as e:
+                    #     logging.error(f"Error {e}, removing client")
+                    #     self.clients.pop(addr.as_tuple())
+                except (TimeoutError, BlockingIOError):
                     continue
                 except ConnectionError:
                     break

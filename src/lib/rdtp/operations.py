@@ -2,13 +2,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Union
-from .transport import (
-    sockaddr,
-    RDTTransport,
-    RDTSegment,
-    StopAndWaitTransport,
-    SelectiveAckTransport,
-)
+from .transport import sockaddr, RDTTransport, StopAndWaitTransport
 
 UPLOAD_CHUNK_SIZE = 4096
 DOWNLOAD_CHUNK_SIZE = 4096
@@ -104,8 +98,6 @@ class UploadOperation:
         # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
         # it's less than the file size
         bytes_read = 0
-        full_window = False
-        content_read = 0
         chunk_size = min(UPLOAD_CHUNK_SIZE, self.file_size)
         with open(self.filepath, "rb") as file:
             while bytes_read < self.file_size:
@@ -126,13 +118,20 @@ operations = {
 def unpack_operation(transport: RDTTransport, data: bytes):
     opcode = data[:1]
     if opcode not in operations:
-        raise ValueError("Invalid operation")
+        raise ValueError(f"Invalid operation: {opcode}")
     return operations[opcode].unpack(transport, data[1:])
 
 
-def run_operation(opcode: bytes, src: str, host: str, port: int, dest: str):
+def run_operation(
+    opcode: bytes,
+    src: str,
+    host: str,
+    port: int,
+    dest: str,
+    transport_factory=StopAndWaitTransport,
+):
     addr = sockaddr(host, port)
-    with StopAndWaitTransport(sock_timeout=0.01) as transport:
+    with transport_factory(sock_timeout=0.01) as transport:
         # create the operation and run it
         op = operations[opcode](transport, src, dest)
         return op.handle(addr)
