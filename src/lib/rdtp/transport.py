@@ -625,9 +625,11 @@ class SACKTransport(RDTTransport):
         return bytes_sent
 
     def close(self):
-        while self.window:
-            self.resend_window()
-        super().close()
+        try:
+            while self.window:
+                self.resend_window()
+        finally:
+            super().close()
 
 
 # class SelectiveAckTransport(RDTTransport):

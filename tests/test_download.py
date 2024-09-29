@@ -3,7 +3,7 @@ import threading
 import time
 import os
 from pathlib import Path
-from src.lib.rdtp.transport import StopAndWaitTransport, sockaddr
+from src.lib.rdtp.transport import get_transport_factory
 from src.lib.rdtp.server import FileTransferServer
 from src.lib.rdtp.operations import DownloadOperation, run_operation, unpack_operation
 
@@ -17,10 +17,13 @@ def basic_server(server):
         pass
 
 
-def download(addr, filepath: Path):
+def download(addr, filepath: Path, is_sack=False):
     storage_path = Path("server_storage")
-    server = FileTransferServer(addr[0], addr[1], storage_path)
-    client = StopAndWaitTransport()
+    transport_factory = get_transport_factory(is_sack)
+    server = FileTransferServer(
+        addr[0], addr[1], storage_path, transport_factory=transport_factory
+    )
+    client = transport_factory()
     # print(client.read_timeout)
     created_file = Path(filepath.name)
     t = threading.Thread(target=basic_server, args=[server])
@@ -70,3 +73,21 @@ def test_download_medium_file():
     addr = ("localhost", 34569)
     filepath = Path("tests", "files", "medium.txt")
     download(addr, filepath)
+
+
+def test_sack_download_small_file():
+    addr = ("localhost", 34570)
+    filepath = Path("tests", "files", "small.txt")
+    download(addr, filepath, is_sack=True)
+
+
+def test_sack_download_medium_small_file():
+    addr = ("localhost", 34571)
+    filepath = Path("tests", "files", "medium_small.txt")
+    download(addr, filepath, is_sack=True)
+
+
+def test_sack_download_medium_file():
+    addr = ("localhost", 34572)
+    filepath = Path("tests", "files", "medium.txt")
+    download(addr, filepath, is_sack=True)
