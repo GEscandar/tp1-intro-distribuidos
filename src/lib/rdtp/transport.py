@@ -3,6 +3,8 @@ import logging
 import select
 import sys
 import errno
+import threading
+import time
 from dataclasses import dataclass, astuple
 from .exceptions import ConnectionError
 
@@ -11,7 +13,7 @@ MAX_READ_TIMEOUT = 1.0
 MIN_READ_TIMEOUT = 0.01
 DEFAULT_TIMEOUT = 2
 
-__all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
+__all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport", "SelectiveAckTransport"]
 
 
 @dataclass
@@ -263,3 +265,109 @@ class StopAndWaitTransport(RDTTransport):
             except (TimeoutError, BlockingIOError):
                 continue
         raise ConnectionError("Connection lost")
+
+
+class SelectiveAckTransport(RDTTransport):
+    def __init__(self, sock: socket.socket = None, sock_timeout: float = None, read_timeout: float = READ_TIMEOUT, window_size: int = 4):
+        super().__init__(sock, sock_timeout, read_timeout)
+        self.max_seq = None
+        self.window_size = window_size
+        self.sent_segments = {}
+        self.acknowledged = set()
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.stop_event = threading.Event()
+        self.base_seq = 0  # Primer número de secuencia en la ventana
+        self.next_seq = 0  # Próximo número de secuencia a enviar
+        self.segment_timers = {}  # Almacenar timers para cada segmento
+        self.timeout_interval = 1  # Tiempo de espera antes de retransmitir (en segundos)
+
+    def send(self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES) -> int:
+        segment_size = 1024  # Tamaño fijo del segmento
+        segments = [data[i:i + segment_size] for i in range(0, len(data), segment_size)]
+        self.max_seq = len(segments)  # Número total de segmentos
+
+        send_thread = threading.Thread(target=self._send_segments, args=(segments, address, op_metadata, max_retries))
+        recv_thread = threading.Thread(target=self._receive_acks)
+
+        send_thread.start()
+        recv_thread.start()
+
+        send_thread.join()
+        self.stop_event.set()
+        recv_thread.join()
+
+        if len(self.acknowledged) != len(segments):
+            raise ConnectionError("Connection lost")
+
+        total_bytes_sent = sum(len(self.sent_segments[seq].data) for seq in self.acknowledged)
+        return total_bytes_sent
+
+    def _send_segments(self, segments, address, op_metadata):
+        """ Hilo encargado de enviar los segmentos respetando el tamaño de la ventana """
+        while self.base_seq < self.max_seq:
+            with self.cond:
+                # Enviar nuevos segmentos si la ventana tiene espacio
+                while self.next_seq < self.base_seq + self.window_size and self.next_seq < self.max_seq:
+                    if self.next_seq not in self.acknowledged:
+                        logging.info(f"Enviando segmento {self.next_seq}")
+                        segment_data = segments[self.next_seq]
+                        segment = self._create_segment(segment_data, seq=self.next_seq, op_metadata=op_metadata)
+                        self._send(segment, address)
+                        self.sent_segments[self.next_seq] = segment
+                        # Iniciar timer para este segmento
+                        self._start_timer(self.next_seq)
+                        self.next_seq += 1
+
+                # Esperar notificación (ack recibido) o timeout
+                self.cond.wait(timeout=self.timeout_interval)
+
+                # Revisar si hay timeouts pendientes para retransmitir
+                self._check_timeouts(address)
+
+    def _start_timer(self, seq):
+        """ Inicia el timer para un segmento. """
+        self.segment_timers[seq] = time.time()
+
+    def _check_timeouts(self, address):
+        """ Revisa los timeouts de los segmentos enviados y retransmite si es necesario. """
+        current_time = time.time()
+        for seq in range(self.base_seq, self.next_seq):
+            if seq not in self.acknowledged:
+                elapsed_time = current_time - self.segment_timers[seq]
+                if elapsed_time >= self.timeout_interval:
+                    # Timeout: retransmitir el segmento
+                    logging.info(f"Timeout: Retransmitiendo segmento {seq}")
+                    self._send(self.sent_segments[seq], address)
+                    self._start_timer(seq)  # Reiniciar timer después de retransmitir
+
+    def _receive_acks(self):
+        """ Hilo para recibir ACKS, mover la ventana y notificar al hilo sender. """
+        while not self.stop_event.is_set():
+            try:
+                ack_segment, _ = self.read(0)
+                logging.info(f"Recibido ack {ack_segment.ack}")
+                with self.cond:
+                    # Registrar el ack recibido
+                    if ack_segment.ack >= self.base_seq:
+                        logging.info(f"Acknowledged: {ack_segment.ack}")
+                        self.acknowledged.add(ack_segment.ack)
+
+                        # Mover la ventana si el segmento base ha sido reconocido
+                        logging.info(f"Base seq: {self.base_seq}")
+                        while self.base_seq in self.acknowledged:
+                            logging.info(f"Avanzando ventana: {self.base_seq}")
+                            self.base_seq += 1
+
+                    # Notificar al hilo sender que se ha recibido un ack
+                    self.cond.notify_all()
+            except (TimeoutError, BlockingIOError):
+                continue
+
+    def _ack(self, pkt: RDTSegment, addr: sockaddr):
+        """ Enviar ack de respuesta al recibir un segmento. """
+        with self.lock:
+            if pkt.seq not in self.acknowledged:
+                self.acknowledged.add(pkt.seq)
+        ack_pkt = self._create_segment(seq=pkt.seq, ack=pkt.seq)
+        self._send(ack_pkt, addr)
