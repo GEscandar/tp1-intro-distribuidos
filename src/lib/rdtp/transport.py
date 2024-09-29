@@ -13,7 +13,20 @@ MIN_READ_TIMEOUT = 0.01
 DEFAULT_TIMEOUT = 2
 SACK_WINDOW_SIZE = 30
 
-__all__ = ["sockaddr", "RDTSegment", "RDTTransport", "StopAndWaitTransport"]
+__all__ = [
+    "sockaddr",
+    "RDTSegment",
+    "RDTTransport",
+    "StopAndWaitTransport",
+    "SACKTransport",
+    "get_transport_factory",
+]
+
+
+def get_transport_factory(is_sack: bool):
+    if is_sack:
+        return SACKTransport
+    return StopAndWaitTransport
 
 
 @dataclass

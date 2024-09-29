@@ -54,6 +54,13 @@ def init_logger(filename, verbose=False, quiet=False):
 def common_options(host=True):
     options = [
         click.option(
+            "--sack",
+            is_flag=True,
+            help=(
+                "If set, use SACKTransport when communicating with a peer. Otherwise, use StopAndWaitTransport"
+            ),
+        ),
+        click.option(
             "-v",
             "--verbose",
             is_flag=True,
