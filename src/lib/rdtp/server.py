@@ -7,8 +7,6 @@ from .operations import (
     unpack_operation,
     UploadOperation,
     DownloadOperation,
-    UPLOAD_CHUNK_SIZE,
-    DOWNLOAD_CHUNK_SIZE,
 )
 from .transport import (
     RDTTransport,
@@ -16,6 +14,7 @@ from .transport import (
     SACKTransport,
     RDTSegment,
     sockaddr,
+    RECV_CHUNK_SIZE,
 )
 from .exceptions import ConnectionError
 
@@ -58,8 +57,7 @@ class ClientOperationHandler:
     def handle_download(self, file_size, storage_path: Path):
         bytes_read = 0
         logging.info(f"Starting download of file at {self.op.filename}")
-        # chunk_size = DOWNLOAD_CHUNK_SIZE - RDTSegment.HEADER_SIZE
-        chunk_size = DOWNLOAD_CHUNK_SIZE
+        chunk_size = RECV_CHUNK_SIZE
         with open(self.op.filename, "rb") as f:
             while bytes_read < file_size:
                 yield f.read(chunk_size)
@@ -150,7 +148,7 @@ class FileTransferServer(Server):
         self, host: str, port: int, path: Path, transport_factory=StopAndWaitTransport
     ):
         super().__init__(host, port, transport_factory)
-        self.chunk_size = max(UPLOAD_CHUNK_SIZE, DOWNLOAD_CHUNK_SIZE)
+        self.chunk_size = RECV_CHUNK_SIZE
         self.storage_path = path
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):

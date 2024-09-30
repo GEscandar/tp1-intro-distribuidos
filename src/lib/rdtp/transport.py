@@ -12,6 +12,7 @@ MAX_READ_TIMEOUT = 1.0
 MIN_READ_TIMEOUT = 0.01
 DEFAULT_TIMEOUT = 2
 SACK_WINDOW_SIZE = 20
+RECV_CHUNK_SIZE = 4096
 
 __all__ = [
     "sockaddr",
@@ -281,7 +282,7 @@ class RDTTransport:
             return RDTSegment.unpack(data), sockaddr(*addr)
         raise ConnectionError("Socket closed")
 
-    def receive(self, bufsize, ack=True, max_retries=0):
+    def receive(self, bufsize=RECV_CHUNK_SIZE, ack=True, max_retries=MAX_RETRIES):
         """
         Receive data through the socket, stripping the headers.
         Emits the corresponding ACK to the sending end.
@@ -304,15 +305,7 @@ class RDTTransport:
             self._ack(pkt, addr)
         return pkt, addr
 
-    def close(self, wait=False):
-        # Wait for resends due to packet loss
-        # for _ in range(MAX_RETRIES + 1):
-        #     try:
-        #         self.receive(1024)
-        #     except (TimeoutError, BlockingIOError):
-        #         if not wait:
-        #             break
-        #         continue
+    def close(self):
         if not self.closed:
             logging.debug("Closing UDP socket")
             try:
@@ -557,11 +550,11 @@ class SACKTransport(RDTTransport):
             return slot.pkt, slot.addr
         return super().read(bufsize)
 
-    def receive(self, bufsize, ack=True, max_retries=0):
+    def receive(self, bufsize=RECV_CHUNK_SIZE, ack=True, max_retries=MAX_RETRIES):
         self._ensure_empty_window()
-        pkt, addr = super().receive(4096, ack, max_retries)
+        pkt, addr = super().receive(bufsize, ack, max_retries)
         while pkt.seq > self.ack:
-            pkt, addr = super().receive(4096, ack, max_retries)
+            pkt, addr = super().receive(bufsize, ack, max_retries)
         return pkt, addr
 
     def refill_window(self, ack_segment: RDTSegment):
