@@ -46,7 +46,7 @@ class DownloadOperation:
         with open(self.destination, "wb") as f:
             while bytes_written < file_size:
                 pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE, max_retries=100)
-                # data = self.unpack_headers(pkt.data)
+                logging.debug(f"Writing packet {pkt} to file")
                 bytes_written += f.write(pkt.data)
 
 
@@ -102,8 +102,8 @@ class UploadOperation:
         with open(self.filepath, "rb") as file:
             while bytes_read < self.file_size:
                 content = file.read(chunk_size)
+                self.transport.send(content, addr)
                 bytes_read += len(content)
-                self.transport.send(content, addr, max_retries=50)
         logging.debug(
             f"Finished uploading file {self.filepath.name} to server at {addr}"
         )

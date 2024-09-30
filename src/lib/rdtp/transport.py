@@ -11,7 +11,7 @@ MAX_RETRIES = 100
 MAX_READ_TIMEOUT = 1.0
 MIN_READ_TIMEOUT = 0.01
 DEFAULT_TIMEOUT = 2
-SACK_WINDOW_SIZE = 30
+SACK_WINDOW_SIZE = 20
 
 __all__ = [
     "sockaddr",
@@ -333,7 +333,7 @@ class StopAndWaitTransport(RDTTransport):
                     segment,
                     address,
                 )
-                logging.debug("Waiting for ack...")
+                logging.debug(f"Waiting for ack... (nattempt={nattempt})")
                 ack_segment, _ = self.read(0)
                 logging.debug(
                     f"Received ack: {ack_segment.ack}, expected ack={self.seq}, nattempt={nattempt}"
@@ -351,6 +351,13 @@ class StopAndWaitTransport(RDTTransport):
                     self.read_timeout /= 2
                 return bytes_sent
             except (TimeoutError, BlockingIOError):
+                if (
+                    nattempt > 0
+                    and nattempt % 3 == 0
+                    and self.read_timeout < MAX_READ_TIMEOUT
+                ):
+                    # triple retransmission, double read_timeout
+                    self.read_timeout += MIN_READ_TIMEOUT
                 continue
         raise ConnectionError("Connection lost")
 
@@ -377,7 +384,7 @@ class SACKTransport(RDTTransport):
         self.recvbuf: List[WindowSlot] = []
         self.iterbuf = self._iterbuf()
         self.sack_options: List[sack_block] = []
-        self.nacks = 0
+        self.nttempts = 0
         self._buf_yielded = False
 
     @property
@@ -404,20 +411,25 @@ class SACKTransport(RDTTransport):
         Args:
             pkt (RDTSegment): The received packet
         """
+        import copy
+
         logging.debug(f"Saving packet [{pkt}] in recvbuf")
         slot = WindowSlot(
-            self._create_segment(
-                pkt.data,
-                seq=pkt.seq,
-                ack=pkt.ack,
-                op_metadata=pkt.op_metadata,
-                sack_options=None,
-            ),
+            # self._create_segment(
+            #     pkt.data,
+            #     seq=pkt.seq,
+            #     ack=pkt.ack,
+            #     op_metadata=pkt.op_metadata,
+            #     sack_options=None,
+            # ),
+            copy.deepcopy(pkt),
             addr,
         )
         for i, _slot in enumerate(self.recvbuf):
-            if slot.pkt.seq <= _slot.pkt.seq:
+            if slot.pkt.seq < _slot.pkt.seq:
                 self.recvbuf.insert(i, slot)
+                break
+            elif slot.pkt.seq == _slot.pkt.seq:
                 break
         else:
             self.recvbuf.append(slot)
@@ -513,30 +525,44 @@ class SACKTransport(RDTTransport):
         logging.debug(
             f"Received packet of length: {len(pkt.data)} seq: {pkt.seq}, expected seq={self.ack}"
         )
-        if pkt.seq > self.ack:
+        out_of_order = False
+        if pkt.seq > self.ack and pkt.data:
+            out_of_order = True
+            logging.debug("Packet out of order")
             self._save_packet(pkt, addr)
         elif pkt.seq < self.ack:
-            logging.debug("Retransmission, dropping packet")
-            pkt.data = bytes()
             return super()._ack(pkt, addr)
 
-        old_ack = self.ack
         self._update_sack_options(pkt)
 
         # send ack
         sent = self._send(self._create_segment(), addr)
 
-        if self.ack == old_ack:
-            logging.debug("Packet out of order")
+        if out_of_order:
             pkt.data = bytes()
 
         return sent
+
+    def _ensure_empty_window(self, max_retries=MAX_RETRIES):
+        nattempt = 0
+        while self.window and nattempt < max_retries:
+            self.resend_window()
+            nattempt += 1
+        if nattempt == max_retries:
+            raise ConnectionError("Connection lost")
 
     def read(self, bufsize):
         slot = self.pop_recv()
         if slot:
             return slot.pkt, slot.addr
         return super().read(bufsize)
+
+    def receive(self, bufsize, ack=True, max_retries=0):
+        self._ensure_empty_window()
+        pkt, addr = super().receive(4096, ack, max_retries)
+        while pkt.seq > self.ack:
+            pkt, addr = super().receive(4096, ack, max_retries)
+        return pkt, addr
 
     def refill_window(self, ack_segment: RDTSegment):
         if not self.window:
@@ -594,8 +620,8 @@ class SACKTransport(RDTTransport):
             # and only then send the packet
             logging.debug("Window full, waiting for ack")
             try:
-                # ack_segment, _ = self.read(0)
-                ack_segment, _ = self.receive(0, ack=False, max_retries=10)
+                ack_segment, _ = self.read(0)
+                self.refill_window(ack_segment)
             except TimeoutError:
                 # if no ACK arrives, resend all packets in the window, till
                 # we get an ACK. If that doesn't work, raise ConnectionError
@@ -604,21 +630,9 @@ class SACKTransport(RDTTransport):
 
         # the packet was sent, so wait for an ack without blocking
         try:
-            ack_segment, _ = self.receive(0, ack=False)
-            logging.debug(
-                f"Received ack: {ack_segment.ack}, expected ack={self.window[0].pkt.expected_ack}"
-            )
-            if ack_segment.ack == self.window[0].pkt.expected_ack:
-                self.nacks = 0
-                self.window.pop(0)
-            elif ack_segment.ack < self.seq:
-                # refill window using the acknowledgement information in the sack blocks
-                self.refill_window(ack_segment)
-                self.nacks += 1
-                # triple repeated ack, resend window
-                if self.nacks == 3:
-                    self.nacks = 0
-                    self.resend_window()
+            ack_segment, _ = self.read(0)
+            logging.debug(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
+            self.refill_window(ack_segment)
         except TimeoutError:
             pass
 
@@ -626,8 +640,7 @@ class SACKTransport(RDTTransport):
 
     def close(self):
         try:
-            while self.window:
-                self.resend_window()
+            self._ensure_empty_window()
         finally:
             super().close()
 

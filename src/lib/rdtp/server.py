@@ -10,7 +10,13 @@ from .operations import (
     UPLOAD_CHUNK_SIZE,
     DOWNLOAD_CHUNK_SIZE,
 )
-from .transport import RDTTransport, StopAndWaitTransport, RDTSegment, sockaddr
+from .transport import (
+    RDTTransport,
+    StopAndWaitTransport,
+    SACKTransport,
+    RDTSegment,
+    sockaddr,
+)
 from .exceptions import ConnectionError
 
 SERVER_READ_TIMEOUT = 0
@@ -22,6 +28,7 @@ class ClientOperationHandler:
         self.op = None
         self.handler = None
         self.transport = transport
+        self.finished = False
 
     def _init_handler(self, client_addr: sockaddr, storage_path: Path):
         if not os.path.exists(storage_path):
@@ -57,6 +64,7 @@ class ClientOperationHandler:
             while bytes_read < file_size:
                 yield f.read(chunk_size)
                 bytes_read += chunk_size
+            logging.info(f"Download end, closing file {self.op.filename}")
 
     def get_pending(self):
         content = None
@@ -66,6 +74,7 @@ class ClientOperationHandler:
             except StopIteration:
                 self.handler = None
                 self.op = None
+                self.finished = True
         return content
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr, storage_path: Path):
@@ -79,13 +88,17 @@ class ClientOperationHandler:
                 )
                 self._init_handler(addr, storage_path)
             return
-
-        if self.op.opcode == UploadOperation.opcode:
+        elif self.op.opcode == UploadOperation.opcode:
             try:
                 self.handler.send(pkt)
             except StopIteration:
                 self.handler = None
                 self.op = None
+                self.finished = True
+
+    def close(self):
+        if isinstance(self.transport, SACKTransport):
+            self.transport._ensure_empty_window()
 
 
 class Server:
@@ -156,27 +169,36 @@ class FileTransferServer(Server):
             while True:
                 try:
                     # check for pending download sends
+                    client_finished = False
                     for addr, client in self.clients.items():
                         pending = client.get_pending()
                         if pending:
                             client.transport.send(pending, sockaddr(*addr))
-                    # pkt, addr = self.transport.read(self.chunk_size)
-                    if self.clients:
-                        for client in self.clients.values():
-                            pkt, addr = client.transport.read(self.chunk_size)
-                            break
+                        elif client.finished:
+                            client_finished = True
+                            client.close()
+                    for _, client in self.clients.items():
+                        pkt, addr = client.transport.read(self.chunk_size)
+                        break
                     else:
                         pkt, addr = self.transport.read(self.chunk_size)
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
-                    # try:
-                    self.on_receive(pkt, addr)
-                    # except Exception as e:
-                    #     logging.error(f"Error {e}, removing client")
-                    #     self.clients.pop(addr.as_tuple())
+                    try:
+                        self.on_receive(pkt, addr)
+                    except Exception as e:
+                        logging.error(f"Error {e}, removing client")
+                        self.clients.pop(addr.as_tuple())
+                    if client_finished:
+                        self.clients = {
+                            addr: client
+                            for addr, client in self.clients.items()
+                            if not client.finished
+                        }
                 except (TimeoutError, BlockingIOError):
                     continue
                 except ConnectionError:
+                    logging.error("Connection error, closing server")
                     break
         except KeyboardInterrupt:
             logging.debug("Stopped by Ctrl+C")
