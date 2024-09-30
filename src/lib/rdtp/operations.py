@@ -91,6 +91,9 @@ class UploadOperation:
         return data
 
     def handle(self, addr: sockaddr):
+        logging.info(
+            f"Starting upload for file {self.filepath.name} to server at {addr}"
+        )
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
         # upload the file in chunks of size RECV_CHUNK_SIZE if

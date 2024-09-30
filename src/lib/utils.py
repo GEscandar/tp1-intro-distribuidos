@@ -39,6 +39,7 @@ def init_logger(filename, verbose=False, quiet=False):
     verbosity = get_log_level(verbose, quiet)
     logging.basicConfig(
         filename=filename,
+        filemode="w",
         level=verbosity,
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
