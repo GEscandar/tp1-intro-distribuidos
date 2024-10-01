@@ -1,7 +1,12 @@
 import socket
+import random
+import sys
+from server import SERVER_ADDRESS
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from src.lib.rdtp.transport import SelectiveAckTransport, StopAndWaitTransport, sockaddr
 from testing_server import SERVER_ADDRESS
 from concurrent.futures import ThreadPoolExecutor
-from src.lib.rdtp.transport import StopAndWaitTransport, sockaddr
 
 
 def client_send(*things):
@@ -26,15 +31,15 @@ def sw_send(*things):
     res = []
     with StopAndWaitTransport() as transport:
         while True:
-            for t in things:
-                try:
-                    if t == "fin":
-                        done = True
-                        break
-                    resp = transport.send(t.encode(), sockaddr(*SERVER_ADDRESS))
-                    res.append(resp)
-                except KeyboardInterrupt:
-                    continue
+            client_input = input("Enter something (or type 'fin' to quit): ")
+            if client_input == "fin":
+                done = True
+                break
+            try:
+                resp = transport.send(client_input.encode(), sockaddr(*SERVER_ADDRESS))
+                res.append(resp)
+            except KeyboardInterrupt:
+                continue
             return tuple(res)
 
 
@@ -54,6 +59,7 @@ def test_concurrent_sending():
         "fin",
     ]
     with ThreadPoolExecutor() as executor:
+        # resp = executor.map(sw_send, payloads[:4], payloads[4:8], payloads[8:12])
         resp = executor.map(sw_send, payloads[:4], payloads[4:8], payloads[8:12])
         resp = [val for tup in resp for val in tup]
     print(resp)
@@ -61,5 +67,28 @@ def test_concurrent_sending():
     #     assert s.lower() in payloads
 
 
+def tcp_sack_run():
+    # resp = executor.map(sw_send, payloads[:4], payloads[4:8], payloads[8:12])
+
+    with SelectiveAckTransport() as transport:
+        transport.run()
+
+
+#    resp = [val for tup in resp for val in tup]
+
+
 if __name__ == "__main__":
-    test_concurrent_sending()
+    # test_concurrent_sending()
+
+    # Get the arguments
+    args = sys.argv
+
+    if len(args) == 2:
+        flag = args[1]
+        # mejorar el tema de los flags (sacar 0 o 1 y poner algo tipo -s&w y -TCPsa)
+        if flag == "0":
+            sw_send()  # Stop & wait
+        elif flag == "1":
+            tcp_sack_run()  # TCP Selective Ack
+    else:
+        raise ("Invalid arguments")

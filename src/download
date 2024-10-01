@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import click
-from lib.rdtp.operations import run_operation, DownloadOperation
+from lib.rdtp import run_operation, DownloadOperation, get_transport_factory
 from lib.utils import common_options, init_logger
 
 
@@ -28,13 +28,22 @@ def main(
     ctx: click.Context,
     dst: str,
     name: str,
+    sack: bool,
     verbose: bool,
     quiet: bool,
     host: str,
     port: int,
 ):
     init_logger("download.log", verbose, quiet)
-    run_operation(DownloadOperation.opcode, name, host, port, dst)
+    transport_factory = get_transport_factory(sack)
+    run_operation(
+        DownloadOperation.opcode,
+        name,
+        host,
+        port,
+        dst,
+        transport_factory=transport_factory,
+    )
 
 
 if __name__ == "__main__":

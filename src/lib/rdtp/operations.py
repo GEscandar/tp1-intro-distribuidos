@@ -2,10 +2,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Union
-from .transport import sockaddr, RDTTransport, StopAndWaitTransport
-
-UPLOAD_CHUNK_SIZE = 4096
-DOWNLOAD_CHUNK_SIZE = 4096
+from .transport import sockaddr, RDTTransport, StopAndWaitTransport, RECV_CHUNK_SIZE
 
 
 class DownloadOperation:
@@ -39,15 +36,16 @@ class DownloadOperation:
         logging.info(f"Starting download for file {self.filename}")
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
-        resp, _ = self.transport.receive(4, max_retries=100)
+        resp, _ = self.transport.receive()
         file_size = int.from_bytes(resp.data, sys.byteorder)
         logging.debug(f"Got file size of {file_size}, fetching data")
         bytes_written = 0
         with open(self.destination, "wb") as f:
             while bytes_written < file_size:
-                pkt, _ = self.transport.receive(DOWNLOAD_CHUNK_SIZE, max_retries=100)
-                # data = self.unpack_headers(pkt.data)
+                pkt, _ = self.transport.receive()
+                logging.debug(f"Writing packet {pkt} to file")
                 bytes_written += f.write(pkt.data)
+        logging.info(f"Finished downloading file {self.filename} from server at {addr}")
 
 
 class UploadOperation:
@@ -93,18 +91,21 @@ class UploadOperation:
         return data
 
     def handle(self, addr: sockaddr):
+        logging.info(
+            f"Starting upload for file {self.filepath.name} to server at {addr}"
+        )
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
-        # upload the file in chunks of size UPLOAD_CHUNK_SIZE if
+        # upload the file in chunks of size RECV_CHUNK_SIZE if
         # it's less than the file size
         bytes_read = 0
-        chunk_size = min(UPLOAD_CHUNK_SIZE, self.file_size)
+        chunk_size = min(RECV_CHUNK_SIZE, self.file_size)
         with open(self.filepath, "rb") as file:
             while bytes_read < self.file_size:
                 content = file.read(chunk_size)
+                self.transport.send(content, addr)
                 bytes_read += len(content)
-                self.transport.send(content, addr, max_retries=50)
-        logging.debug(
+        logging.info(
             f"Finished uploading file {self.filepath.name} to server at {addr}"
         )
 
@@ -118,13 +119,20 @@ operations = {
 def unpack_operation(transport: RDTTransport, data: bytes):
     opcode = data[:1]
     if opcode not in operations:
-        raise ValueError("Invalid operation")
+        raise ValueError(f"Invalid operation: {opcode}")
     return operations[opcode].unpack(transport, data[1:])
 
 
-def run_operation(opcode: bytes, src: str, host: str, port: int, dest: str):
+def run_operation(
+    opcode: bytes,
+    src: str,
+    host: str,
+    port: int,
+    dest: str,
+    transport_factory=StopAndWaitTransport,
+):
     addr = sockaddr(host, port)
-    with StopAndWaitTransport(sock_timeout=0.01) as transport:
+    with transport_factory(sock_timeout=0.01) as transport:
         # create the operation and run it
         op = operations[opcode](transport, src, dest)
         return op.handle(addr)

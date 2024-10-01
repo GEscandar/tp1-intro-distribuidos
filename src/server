@@ -2,7 +2,7 @@
 from pathlib import Path
 import click
 import logging
-from lib.rdtp.server import FileTransferServer
+from lib.rdtp import FileTransferServer, get_transport_factory
 from lib.utils import common_options, init_logger
 
 
@@ -22,12 +22,19 @@ from lib.utils import common_options, init_logger
 @common_options(host=True)
 @click.pass_context
 def main(
-    ctx: click.Context, storage: Path, verbose: bool, quiet: bool, host: str, port: int
+    ctx: click.Context,
+    storage: Path,
+    sack: bool,
+    verbose: bool,
+    quiet: bool,
+    host: str,
+    port: int,
 ):
     init_logger("server.log", verbose, quiet)
     logging.info(f"Starting server at port {port}")
+    transport_factory = get_transport_factory(sack)
     addr = ("", port)
-    server = FileTransferServer(*addr, storage)
+    server = FileTransferServer(*addr, storage, transport_factory=transport_factory)
     server.start()
 
 

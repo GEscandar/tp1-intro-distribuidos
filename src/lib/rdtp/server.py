@@ -2,42 +2,84 @@ import logging
 import socket
 import os
 import sys
+import threading
+import queue
 from pathlib import Path
+from typing import Dict, List
 from .operations import (
     unpack_operation,
     UploadOperation,
     DownloadOperation,
-    UPLOAD_CHUNK_SIZE,
-    DOWNLOAD_CHUNK_SIZE,
 )
-from .transport import RDTTransport, StopAndWaitTransport, RDTSegment, sockaddr
+from .transport import (
+    RDTTransport,
+    StopAndWaitTransport,
+    SACKTransport,
+    RDTSegment,
+    sockaddr,
+    RECV_CHUNK_SIZE,
+)
 from .exceptions import ConnectionError
 
+SERVER_READ_TIMEOUT = 0.001
 
-class ClientOperationHandler:
 
-    def __init__(self, transport: RDTTransport) -> None:
+def get_server_socket(addr: sockaddr):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if sys.platform != "win32":
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(addr.as_tuple())
+    return sock
+
+
+class ClientOperationHandler(threading.Thread):
+
+    def __init__(
+        self,
+        # transport,
+        transport_factory,
+        server_addr: sockaddr,
+        client_addr: sockaddr,
+        storage_path: Path,
+    ) -> None:
+        threading.Thread.__init__(self)
+        logging.info(f"Starting client handler for {client_addr}")
         self.op = None
         self.handler = None
-        self.transport = transport
+        # self.transport = transport
+        self.transport = transport_factory(
+            sock=get_server_socket(server_addr),
+            sock_timeout=0,
+            read_timeout=SERVER_READ_TIMEOUT,
+        )
+        self.finished = False
+        self.client_addr = client_addr
+        self.storage_path = storage_path
+        self.lock = threading.Lock()
+        self.queue = queue.Queue()
 
-    def _init_handler(self, client_addr: sockaddr, storage_path: Path):
-        if not os.path.exists(storage_path):
-            os.makedirs(storage_path)
+    def _enqueue(self, pkt: RDTSegment):
+        self.queue.put(pkt)
+
+    def _init_handler(self):
+        if not os.path.exists(self.storage_path):
+            os.makedirs(self.storage_path)
         if self.op.opcode == UploadOperation.opcode:
-            self.handler = self.handle_upload(storage_path)
+            self.handler = self.handle_upload()
             self.handler.send(None)
         elif self.op.opcode == DownloadOperation.opcode:
-            self.op.filename = str(Path(storage_path, self.op.filename))
+            self.op.filename = str(Path(self.storage_path, self.op.filename))
             file_size = os.stat(self.op.filename).st_size
-            self.handler = self.handle_download(file_size, storage_path)
+            self.handler = self.handle_download(file_size)
             logging.debug(f"Sending file size of {file_size} to client")
             # send file size to client without waiting too long for the ack
-            self.transport.send(file_size.to_bytes(4, sys.byteorder), client_addr)
+            self.transport.send(file_size.to_bytes(4, sys.byteorder), self.client_addr)
 
-    def handle_upload(self, storage_path: Path):
+    def handle_upload(self):
         bytes_written = 0
-        dest = Path(storage_path, self.op.destination)
+        dest = Path(self.storage_path, self.op.destination)
         logging.info(f"Starting upload of file at {dest}")
         with open(dest, "wb") as f:
             while bytes_written < self.op.file_size:
@@ -46,15 +88,17 @@ class ClientOperationHandler:
                 bytes_written += f.write(pkt.data)
             logging.info(f"Upload end, saving file {dest}")
 
-    def handle_download(self, file_size, storage_path: Path):
+    def handle_download(self, file_size):
         bytes_read = 0
         logging.info(f"Starting download of file at {self.op.filename}")
-        # chunk_size = DOWNLOAD_CHUNK_SIZE - RDTSegment.HEADER_SIZE
-        chunk_size = DOWNLOAD_CHUNK_SIZE
+        chunk_size = RECV_CHUNK_SIZE
         with open(self.op.filename, "rb") as f:
             while bytes_read < file_size:
-                yield f.read(chunk_size)
+                content = f.read(chunk_size)
+                logging.debug(f"yielding chunk: {bytes_read}")
                 bytes_read += chunk_size
+                yield content
+            logging.info(f"Download end, closing file {self.op.filename}")
 
     def get_pending(self):
         content = None
@@ -64,9 +108,10 @@ class ClientOperationHandler:
             except StopIteration:
                 self.handler = None
                 self.op = None
+                self.finished = True
         return content
 
-    def on_receive(self, pkt: RDTSegment, addr: sockaddr, storage_path: Path):
+    def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         if not self.op:
             if pkt.op_metadata:
                 # only unpack the first time
@@ -75,15 +120,52 @@ class ClientOperationHandler:
                 logging.debug(
                     f"Unpacked operation: {type(self.op)} - {self.op.__dict__}"
                 )
-                self._init_handler(addr, storage_path)
+                self._init_handler()
             return
-
-        if self.op.opcode == UploadOperation.opcode:
+        elif self.op.opcode == UploadOperation.opcode:
             try:
                 self.handler.send(pkt)
             except StopIteration:
                 self.handler = None
                 self.op = None
+                self.finished = True
+
+    def run(self):
+        try:
+            while not self.finished:
+                try:
+                    pending = self.get_pending()
+                    if pending:
+                        self.transport.send(pending, self.client_addr)
+                    try:
+                        pkt = self.queue.get(block=False)
+                    except queue.Empty:
+                        try:
+                            pkt, _ = self.transport.read(RECV_CHUNK_SIZE)
+                        except (TimeoutError, BlockingIOError):
+                            continue
+                    self.transport._ack(pkt, self.client_addr)
+                    self.on_receive(pkt, self.client_addr)
+                except (TimeoutError, BlockingIOError):
+                    continue
+                except ConnectionError:
+                    logging.error("Connection error, closing server")
+                    break
+                except Exception as e:
+                    # logging.error(f"Error running client handler: {e}")
+                    break
+        finally:
+            # logging.debug("Closing client handler, for some reason")
+            self.close()
+
+    def close(self):
+        logging.info(f"Closing client handler for {self.client_addr}")
+        if not self.finished:
+            self.finished = True
+        with self.lock:
+            self.transport.close()
+        # if isinstance(self.transport, SACKTransport):
+        #     self.transport._ensure_empty_window()
 
 
 class Server:
@@ -92,17 +174,18 @@ class Server:
     def __init__(self, host: str, port: int, transport_factory=RDTTransport):
         self.address = sockaddr(host, port)
         self.clients = {}
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(self.address.as_tuple())
         # we don't want this to block on read or write operations, so
         # set both timeouts to 0 or as close to it as possible
-        self.transport = transport_factory(sock, sock_timeout=0, read_timeout=0)
+        self.transport_factory = transport_factory
+        self.transport = transport_factory(
+            sock=get_server_socket(self.address), sock_timeout=0, read_timeout=1
+        )
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         pass
 
     def add_client(self, addr: sockaddr):
-        self.clients[addr.as_tuple()] = StopAndWaitTransport(sock=self.transport.sock)
+        self.clients[addr.as_tuple()] = self.transport_factory(sock=self.transport.sock)
 
     def start(self):
         logging.info("Ready to receive connections")
@@ -113,7 +196,7 @@ class Server:
                     if addr.as_tuple() not in self.clients:
                         self.add_client(addr)
                     self.on_receive(pkt, addr)
-                except BlockingIOError:
+                except (TimeoutError, BlockingIOError):
                     continue
                 except ConnectionError:
                     break
@@ -132,43 +215,57 @@ class FileTransferServer(Server):
         self, host: str, port: int, path: Path, transport_factory=StopAndWaitTransport
     ):
         super().__init__(host, port, transport_factory)
-        self.chunk_size = max(UPLOAD_CHUNK_SIZE, DOWNLOAD_CHUNK_SIZE)
+        self.chunk_size = RECV_CHUNK_SIZE
         self.storage_path = path
-
-    def on_receive(self, pkt: RDTSegment, addr: sockaddr):
-        client = self.clients[addr.as_tuple()]
-        client.transport._ack(pkt, addr)
-        client.on_receive(pkt, addr, self.storage_path)
-
-    def add_client(self, addr: sockaddr):
-        self.clients[addr.as_tuple()] = ClientOperationHandler(
-            transport=StopAndWaitTransport(sock=self.transport.sock)
-        )
+        self.client_threads: Dict[sockaddr, ClientOperationHandler] = {}
+        self.finished_threads: List[ClientOperationHandler] = []
+        self.clients_lock = threading.Lock()
 
     def start(self):
         logging.info("Listening for incoming connections")
         try:
             while True:
                 try:
-                    # check for pending download sends
-                    for addr, client in self.clients.items():
-                        pending = client.get_pending()
-                        if pending:
-                            client.transport.send(pending, sockaddr(*addr))
                     pkt, addr = self.transport.read(self.chunk_size)
-                    if addr.as_tuple() not in self.clients:
-                        self.add_client(addr)
-                    try:
-                        self.on_receive(pkt, addr)
-                    except Exception as e:
-                        logging.error(f"Error {e}, removing client")
-                        self.clients.pop(addr.as_tuple())
-                except BlockingIOError:
+                    if addr.as_tuple() not in self.client_threads:
+                        logging.debug(f"Adding client handler... => {self.clients}")
+                        client = ClientOperationHandler(
+                            # transport=self.transport_factory(sock=self.transport.sock),
+                            transport_factory=self.transport_factory,
+                            server_addr=self.address,
+                            client_addr=addr,
+                            storage_path=self.storage_path,
+                        )
+                        self.client_threads[addr.as_tuple()] = client
+                        client.start()
+                    self.client_threads[addr.as_tuple()]._enqueue(pkt)
+                    for client_addr in list(self.client_threads.keys()):
+                        client = self.client_threads[client_addr]
+                        if client.finished:
+                            logging.debug(f"Popping client: {client_addr}")
+                            try:
+                                self.finished_threads.append(
+                                    self.clients.pop(client_addr)
+                                )
+                            except KeyError:
+                                pass
+                except (TimeoutError, BlockingIOError):
                     continue
                 except ConnectionError:
+                    logging.error("Connection error, closing server")
                     break
         except KeyboardInterrupt:
             logging.debug("Stopped by Ctrl+C")
+        except Exception as e:
+            logging.error(e)
         finally:
-            logging.info("Server shutting down")
             self.close()
+
+    def close(self):
+        logging.info("Server shutting down")
+        for client in self.finished_threads:
+            client.join()
+        for _, client in self.client_threads.items():
+            client.close()
+            client.join()
+        super().close()
