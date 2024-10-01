@@ -21,7 +21,7 @@ from .transport import (
 )
 from .exceptions import ConnectionError
 
-SERVER_READ_TIMEOUT = 0
+SERVER_READ_TIMEOUT = 0.001
 
 
 def get_server_socket(addr: sockaddr):
@@ -38,6 +38,7 @@ class ClientOperationHandler(threading.Thread):
 
     def __init__(
         self,
+        # transport,
         transport_factory,
         server_addr: sockaddr,
         client_addr: sockaddr,
@@ -47,6 +48,7 @@ class ClientOperationHandler(threading.Thread):
         logging.info(f"Starting client handler for {client_addr}")
         self.op = None
         self.handler = None
+        # self.transport = transport
         self.transport = transport_factory(
             sock=get_server_socket(server_addr),
             sock_timeout=0,
@@ -92,9 +94,10 @@ class ClientOperationHandler(threading.Thread):
         chunk_size = RECV_CHUNK_SIZE
         with open(self.op.filename, "rb") as f:
             while bytes_read < file_size:
-                yield f.read(chunk_size)
-                # self.transport.send(data, self.client_addr)
+                content = f.read(chunk_size)
+                logging.debug(f"yielding chunk: {bytes_read}")
                 bytes_read += chunk_size
+                yield content
             logging.info(f"Download end, closing file {self.op.filename}")
 
     def get_pending(self):
@@ -149,9 +152,10 @@ class ClientOperationHandler(threading.Thread):
                     logging.error("Connection error, closing server")
                     break
                 except Exception as e:
-                    logging.error(e)
+                    # logging.error(f"Error running client handler: {e}")
                     break
         finally:
+            # logging.debug("Closing client handler, for some reason")
             self.close()
 
     def close(self):
@@ -217,18 +221,6 @@ class FileTransferServer(Server):
         self.finished_threads: List[ClientOperationHandler] = []
         self.clients_lock = threading.Lock()
 
-    def add_client(self, addr: sockaddr):
-        with self.clients_lock:
-            client = ClientOperationHandler(
-                transport_factory=self.transport_factory,
-                server_addr=self.address,
-                client_addr=addr,
-                storage_path=self.storage_path,
-            )
-            self.clients[addr.as_tuple()] = True
-            self.client_threads[addr.as_tuple()] = client
-            client.start()
-
     def start(self):
         logging.info("Listening for incoming connections")
         try:
@@ -238,6 +230,7 @@ class FileTransferServer(Server):
                     if addr.as_tuple() not in self.client_threads:
                         logging.debug(f"Adding client handler... => {self.clients}")
                         client = ClientOperationHandler(
+                            # transport=self.transport_factory(sock=self.transport.sock),
                             transport_factory=self.transport_factory,
                             server_addr=self.address,
                             client_addr=addr,
@@ -263,11 +256,16 @@ class FileTransferServer(Server):
                     break
         except KeyboardInterrupt:
             logging.debug("Stopped by Ctrl+C")
+        except Exception as e:
+            logging.error(e)
         finally:
-            logging.info("Server shutting down")
-            for client in self.finished_threads:
-                client.join()
-            for _, client in self.client_threads.items():
-                client.close()
-                client.join()
             self.close()
+
+    def close(self):
+        logging.info("Server shutting down")
+        for client in self.finished_threads:
+            client.join()
+        for _, client in self.client_threads.items():
+            client.close()
+            client.join()
+        super().close()

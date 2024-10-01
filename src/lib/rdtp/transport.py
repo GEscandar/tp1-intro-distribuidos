@@ -221,7 +221,15 @@ class RDTTransport:
         except TypeError as e:
             raise ValueError(f"Error converting data to bytes: {e}")
 
-        bytes_sent = self.sock.sendto(data, address.as_tuple())
+        sent = False
+        while not sent:
+            try:
+                bytes_sent = self.sock.sendto(data, address.as_tuple())
+                sent = True
+            except BlockingIOError:
+                import time
+
+                time.sleep(0.001)
         # bytes_sent = self.send_all(data, len(data), address.as_tuple())
         logging.debug(
             f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
@@ -260,7 +268,8 @@ class RDTTransport:
         logging.debug(
             f"got package with seq={pkt.seq}, length={pkt_len}. sending ACK to {addr}. pkt=[{ack_pkt}]"
         )
-        return self._send(ack_pkt, addr)
+        if pkt_len:
+            self._send(ack_pkt, addr)
 
     def read(self, bufsize: int):
         if not self.closed:
@@ -274,6 +283,7 @@ class RDTTransport:
                 if ready[0]:
                     logging.debug(f"Reading fd {self._sockfd}: {ready}")
                     data, addr = self.sock.recvfrom(bufsize + RDTSegment.HEADER_SIZE)
+                    # logging.debug(data)
                 else:
                     raise TimeoutError("Socket read timed out")
             else:
@@ -310,6 +320,8 @@ class RDTTransport:
             logging.debug("Closing UDP socket")
             try:
                 self.sock.close()
+            # except Exception as e:
+            #     logging.error(e)
             finally:
                 self.closed = True
 
@@ -529,7 +541,10 @@ class SACKTransport(RDTTransport):
         self._update_sack_options(pkt)
 
         # send ack
-        sent = self._send(self._create_segment(), addr)
+        sent = 0
+        if pkt.data:
+            logging.debug("Sending ack")
+            sent = self._send(self._create_segment(), addr)
 
         if out_of_order:
             pkt.data = bytes()
@@ -619,6 +634,7 @@ class SACKTransport(RDTTransport):
                 # if no ACK arrives, resend all packets in the window, till
                 # we get an ACK. If that doesn't work, raise ConnectionError
                 self.resend_window(max_retries)
+            logging("Retrying send")
             return self.send(data, address)
 
         # the packet was sent, so wait for an ack without blocking
