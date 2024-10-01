@@ -26,10 +26,6 @@ SERVER_READ_TIMEOUT = 0.001
 
 def get_server_socket(addr: sockaddr):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    if sys.platform != "win32":
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-    else:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(addr.as_tuple())
     return sock
 
@@ -38,9 +34,7 @@ class ClientOperationHandler(threading.Thread):
 
     def __init__(
         self,
-        # transport,
         transport_factory,
-        server_addr: sockaddr,
         client_addr: sockaddr,
         storage_path: Path,
     ) -> None:
@@ -48,9 +42,8 @@ class ClientOperationHandler(threading.Thread):
         logging.info(f"Starting client handler for {client_addr}")
         self.op = None
         self.handler = None
-        # self.transport = transport
         self.transport = transport_factory(
-            sock=get_server_socket(server_addr),
+            sock=get_server_socket(sockaddr("", 0)),
             sock_timeout=0,
             read_timeout=SERVER_READ_TIMEOUT,
         )
@@ -152,7 +145,7 @@ class ClientOperationHandler(threading.Thread):
                     logging.error("Connection error, closing server")
                     break
                 except Exception as e:
-                    # logging.error(f"Error running client handler: {e}")
+                    logging.error(f"Error running client handler: {e}")
                     break
         finally:
             # logging.debug("Closing client handler, for some reason")
@@ -164,8 +157,6 @@ class ClientOperationHandler(threading.Thread):
             self.finished = True
         with self.lock:
             self.transport.close()
-        # if isinstance(self.transport, SACKTransport):
-        #     self.transport._ensure_empty_window()
 
 
 class Server:
@@ -230,9 +221,7 @@ class FileTransferServer(Server):
                     if addr.as_tuple() not in self.client_threads:
                         logging.debug(f"Adding client handler... => {self.clients}")
                         client = ClientOperationHandler(
-                            # transport=self.transport_factory(sock=self.transport.sock),
                             transport_factory=self.transport_factory,
-                            server_addr=self.address,
                             client_addr=addr,
                             storage_path=self.storage_path,
                         )
