@@ -152,10 +152,10 @@ class ClientOperationHandler(threading.Thread):
             self.close()
 
     def close(self):
-        logging.info(f"Closing client handler for {self.client_addr}")
         if not self.finished:
             self.finished = True
         with self.lock:
+            logging.info(f"Closing client handler for {self.client_addr}")
             self.transport.close()
 
 
