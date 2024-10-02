@@ -47,12 +47,14 @@ class ClientOperationHandler(threading.Thread):
             sock_timeout=0,
             read_timeout=SERVER_READ_TIMEOUT,
         )
-        # send the client a message so they know they have to talk to another port now
-        self.transport.handshake(client_addr)
         self.finished = False
         self.client_addr = client_addr
         self.storage_path = storage_path
         self.lock = threading.Lock()
+        self.queue = queue.Queue()
+
+    def _enqueue(self, pkt: RDTSegment):
+        self.queue.put(pkt)
 
     def _init_handler(self):
         if not os.path.exists(self.storage_path):
@@ -132,6 +134,12 @@ class ClientOperationHandler(threading.Thread):
                     self.transport._ack(pkt, self.client_addr)
                     self.on_receive(pkt, self.client_addr)
                 except (TimeoutError, BlockingIOError):
+                    try:
+                        pkt = self.queue.get(block=False)
+                        # this is a handshake message, so simply acknowledge it
+                        self.transport._ack(pkt, self.client_addr)
+                    except queue.Empty:
+                        pass
                     continue
                 except ConnectionError:
                     logging.error("Connection error, closing server")
@@ -219,6 +227,8 @@ class FileTransferServer(Server):
                         )
                         self.client_threads[addr.as_tuple()] = client
                         client.start()
+                    else:
+                        self.client_threads[addr.as_tuple()]._enqueue(pkt)
                     for client_addr in list(self.client_threads.keys()):
                         client = self.client_threads[client_addr]
                         if client.finished:

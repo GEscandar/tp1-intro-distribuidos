@@ -246,7 +246,7 @@ class RDTTransport:
 
     def handshake(self, address: sockaddr):
         logging.debug(f"Sending handshake message to: {address}")
-        for i in range(MAX_RETRIES):
+        for i in range(MAX_RETRIES + 1):
             try:
                 self._send(self._create_segment(), address)
                 _, new_addr = self.read(0)
@@ -384,10 +384,9 @@ class StopAndWaitTransport(RDTTransport):
 class WindowSlot:
     pkt: RDTSegment
     addr: sockaddr
-    nresent = 0
 
     def __repr__(self) -> str:
-        return f"WindowSlot(segment=[{self.pkt}], addr={self.addr}, nresent={self.nresent})"
+        return f"WindowSlot(segment=[{self.pkt}], addr={self.addr})"
 
 
 class SACKTransport(RDTTransport):
@@ -613,16 +612,14 @@ class SACKTransport(RDTTransport):
 
     def resend_window(self, max_retries=MAX_RETRIES):
         logging.debug(f"Resending window")
-        total_resent = 0
+        self.nttempts += 1
         for slot in self.window:
             self._send(slot.pkt, slot.addr)
-            slot.nresent += 1
-            total_resent += slot.nresent
             try:
                 ack_segment, _ = self.read(0)
                 self.refill_window(ack_segment)
             except TimeoutError:
-                if total_resent == max_retries:
+                if self.nttempts == max_retries:
                     raise ConnectionError("Connection lost")
 
     def send(
@@ -647,7 +644,7 @@ class SACKTransport(RDTTransport):
                 # if no ACK arrives, resend all packets in the window, till
                 # we get an ACK. If that doesn't work, raise ConnectionError
                 self.resend_window(max_retries)
-            logging("Retrying send")
+            logging.debug("Retrying send")
             return self.send(data, address)
 
         # the packet was sent, so wait for an ack without blocking
@@ -668,166 +665,3 @@ class SACKTransport(RDTTransport):
             self._ensure_empty_window()
         finally:
             super().close()
-
-
-# class SelectiveAckTransport(RDTTransport):
-#     def __init__(
-#         self,
-#         sock: socket.socket = None,
-#         sock_timeout: float = None,
-#         read_timeout: float = MIN_READ_TIMEOUT,
-#     ):
-#         super().__init__(sock, sock_timeout, read_timeout)
-#         self.lock = threading.Lock()  # Lock for thread safety
-#         self.window = []  # To store acknowledgment messages
-#         self.window_size = 0
-
-#     def send(self, data: bytes, address: sockaddr, max_retries=MAX_RETRIES) -> int:
-#         seq = self.seq
-#         ack = self.ack
-#         if self.window_size > SACK_WINDOW_SIZE:
-#             self.recv_ack()  # Can't send if the window is full
-#             return 0
-
-#         segment = self._create_segment(data, seq, ack)
-#         bytes_sent = self.send_segment(segment, address)
-#         return bytes_sent
-
-#     def send_segment(self, segment, address):
-#         print(f"sending with seq: {segment.seq}")
-#         bytes_sent = self._send(segment, address)
-#         self.add_to_buff(segment, address)
-#         self.recv_ack()
-
-#         self.check_timeout()
-#         return bytes_sent
-
-#     def has_full_window(self):
-#         print(f"Window: {self.window_size} and max is:{SACK_WINDOW_SIZE} ")
-#         print(self.window)
-#         return self.window_size == SACK_WINDOW_SIZE
-
-#     def update_window(self):
-#         bytes_recv = self.recv_ack()
-
-#         self.check_timeout()
-
-#         return bytes_recv
-
-#     def resend(self):
-#         self.window[0].times_resent += 1
-#         if self.window[0].times_resent > MAX_RETRIES:
-#             raise ConnectionError("Connection lost")
-#         self._send(self.window[0].segment, self.window[0].address)
-#         self.window[0].time_sent = datetime.now()
-#         self.recv_ack()
-
-#     def recv_ack(self):
-#         try:
-#             ack_segment, _ = self.read(0)
-
-#             logging.debug(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
-#             print(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
-#             return self.check_ack(ack_segment)
-#         except TimeoutError:
-#             print("No se recibio un ack")
-#             return 0
-
-#     def check_ack(self, ack_segment: RDTSegment):
-#         print(f"Hay ack: {ack_segment.ack}")
-#         for window_slot in self.window:
-#             if window_slot.ack == ack_segment.ack:
-#                 window_slot.has_ack = True
-#                 print(f"Se recibio ack {window_slot}")
-#                 break
-#         bytes_recv = 0
-#         while self.window_size and self.window[0].has_ack == True:
-#             slot = self.window.pop(0)
-#             self.window_size -= 1
-#             bytes_recv += len(slot.segment.data)
-#         return bytes_recv
-
-#     def check_timeout(self):
-#         if not self.window_size:
-#             return
-#         if datetime.now() - self.window[0].time_sent > ACK_WAIT_TIME:
-#             print(f"reenvio {self.window[0].segment.seq}")
-#             self.resend()
-
-#     def update_with(self, pkt: RDTSegment):
-#         if self.ack == pkt.seq:
-#             self.ack += len(pkt.data)
-
-#     def get_data_from_queue(self) -> bytes:
-#         data_from_queue = bytes()
-#         print(self.window)
-#         for i in range(self.window_size):
-#             if not self.window_size:
-#                 break
-#             for i, slot in enumerate(self.window):
-#                 if slot.segment.seq == self.ack:
-#                     data_from_queue += slot.segment.data
-#                     self.ack += len(slot.segment.data)
-#                     self.window.pop(i)
-#                     self.window_size -= 1
-#                     break
-#         return data_from_queue
-
-#     def add_to_buff(self, pkt: RDTSegment, address):
-#         if pkt.seq < self.ack:
-#             # ya se escribio, remandar ack por las dudas
-#             self._ack(pkt)
-#         self.window.append(WindowSlot(pkt, address, self.seq, datetime.now()))
-#         self.window_size += 1
-
-#     def get_window_size(self):
-#         return self.window_size
-
-#     # lado receiver
-#     def receive(self, bufsize, max_retries=MAX_RETRIES):
-#         pkt, addr = self.read(bufsize)
-#         self._ack(pkt, addr)
-#         if pkt.seq != self.ack:
-#             # paquete desordenado
-#             if any([segment.seq == pkt.seq for segment in self.window]):
-#                 return None, addr
-#             self.window.append(WindowRecv(pkt))
-#         else:
-#             self.ack += len(pkt.data)
-#         return pkt, addr
-
-#     def _ack(self, pkt: RDTSegment, addr: sockaddr):
-#         logging.debug(
-#             f"Received packet of length: {len(pkt.data)} seq: {pkt.seq}, expected seq={self.ack}"
-#         )
-#         self._send(self._create_segment(ack=pkt.seq + len(pkt.data)), addr)
-
-
-# class WindowSlot:
-#     def __init__(self, segment, address, ack, time_sent):
-#         self.segment = segment
-#         self.address = address
-#         self.ack = ack
-#         self.time_sent = time_sent
-#         self.times_resent = 0
-#         self.has_ack = False
-
-#     def __str__(self):
-#         return "Slot with seq: {} and is recv: {}".format(
-#             self.segment.seq, self.has_ack
-#         )
-
-#     def __repr__(self):
-#         return str(self)
-
-
-# class WindowRecv:
-#     def __init__(self, segment):
-#         self.segment = segment
-#         self.seq = segment.seq
-
-#     def __str__(self):
-#         return "Slot with seq: {}".format(self.seq)
-
-#     def __repr__(self):
-#         return str(self)
