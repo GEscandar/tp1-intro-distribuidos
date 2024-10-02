@@ -352,10 +352,16 @@ class StopAndWaitTransport(RDTTransport):
                         and nattempt % 3 == 0
                         and self.read_timeout < MAX_READ_TIMEOUT
                     ):
+                        logging.debug(
+                            f"Took {nattempt} attempts to read, doubling read timeout"
+                        )
                         # triple retransmission, double read_timeout
                         self.read_timeout *= 2
                     continue
                 elif nattempt < 4 and self.read_timeout > MIN_READ_TIMEOUT:
+                    logging.debug(
+                        f"Took {nattempt} attempts to read, halving read timeout"
+                    )
                     self.read_timeout /= 2
                 return bytes_sent
             except (TimeoutError, BlockingIOError):
@@ -364,8 +370,11 @@ class StopAndWaitTransport(RDTTransport):
                     and nattempt % 3 == 0
                     and self.read_timeout < MAX_READ_TIMEOUT
                 ):
+                    logging.debug(
+                        f"Took {nattempt} attempts to read, doubling read timeout"
+                    )
                     # triple retransmission, double read_timeout
-                    self.read_timeout += MIN_READ_TIMEOUT
+                    self.read_timeout *= 2
                 continue
         raise ConnectionError("Connection lost")
 
@@ -391,7 +400,7 @@ class SACKTransport(RDTTransport):
         self.recvbuf: List[WindowSlot] = []
         self.iterbuf = self._iterbuf()
         self.sack_options: List[sack_block] = []
-        self.nttempts = 0
+        self.nattempt = 0
         self._buf_yielded = False
 
     @property
@@ -603,15 +612,32 @@ class SACKTransport(RDTTransport):
 
     def resend_window(self, max_retries=MAX_RETRIES):
         logging.debug(f"Resending window")
-        self.nttempts += 1
+        # self.nattempt += 1
         for slot in self.window:
             self._send(slot.pkt, slot.addr)
+            self.nattempt += 1
             try:
                 ack_segment, _ = self.read(0)
                 self.refill_window(ack_segment)
+                if self.nattempt < 4 and self.read_timeout > MIN_READ_TIMEOUT:
+                    logging.debug(
+                        f"Took {self.nattempt} attempts to read, halving read timeout"
+                    )
+                    self.read_timeout /= 2
+                self.nattempt = 0
             except TimeoutError:
-                if self.nttempts == max_retries:
+                if self.nattempt == max_retries:
                     raise ConnectionError("Connection lost")
+                elif (
+                    self.nattempt > 0
+                    and self.nattempt % 3 == 0
+                    and self.read_timeout < MAX_READ_TIMEOUT
+                ):
+                    logging.debug(
+                        f"Took {self.nattempt} attempts to read, doubling read timeout"
+                    )
+                    # triple retransmission, double read_timeout
+                    self.read_timeout *= 2
 
     def send(
         self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
