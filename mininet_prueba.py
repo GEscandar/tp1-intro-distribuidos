@@ -23,9 +23,8 @@ def setup_topology(number_of_clients, packet_loss):
         net.addHost(f"h{i}", ip=f"10.0.0.{i}") for i in range(1, number_of_hosts + 1)
     ]
 
-    info(f"*** Adding links with {packet_loss}% loss\n")
-    for i in range(0, number_of_hosts):
-        net.addLink(hosts[i], s1, loss=packet_loss)
+    info(f"*** Adding links with {packet_loss}% loss in server\n")
+    net.addLink(hosts[0], s1, loss=packet_loss)
 
     info("*** Starting network\n")
     net.start()
