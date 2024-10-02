@@ -1,1 +1,2 @@
 click==8.1.7
+mininet~=2.3.0.dev6
