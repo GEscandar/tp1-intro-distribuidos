@@ -1,10 +1,11 @@
-import socket
 import logging
 import select
+import socket
 import sys
-import random
+import time
 from dataclasses import dataclass, astuple
-from typing import Union, Tuple, List
+from typing import List
+
 from .exceptions import ConnectionError
 
 MAX_RETRIES = 100
@@ -199,7 +200,7 @@ class RDTTransport:
         This is only meant to be called by implementations of this class.
 
         Args:
-            data (Any): Data to send
+            segment (RDTSegment): The segment to send
             address (sockaddr): Server address
 
         Returns:
@@ -212,14 +213,14 @@ class RDTTransport:
             raise ValueError(f"Error converting data to bytes: {e}")
 
         sent = False
+        bytes_sent = 0
         while not sent:
             try:
                 bytes_sent = self.sock.sendto(data, address.as_tuple())
                 sent = True
             except BlockingIOError:
-                import time
-
                 time.sleep(0.001)
+
         # bytes_sent = self.send_all(data, len(data), address.as_tuple())
         logging.debug(
             f"Sent {bytes_sent} bytes to {address}, with data_len={data_len}, seq={segment.seq}, ack={segment.ack}"
@@ -242,6 +243,7 @@ class RDTTransport:
                 _, new_addr = self.read(0)
                 break
             except (TimeoutError, BlockingIOError):
+                time.sleep(0.1)
                 if i == MAX_RETRIES:
                     raise ConnectionError("Unable to connect")
         logging.debug(f"Finished handshake, now talking to: {new_addr}")
@@ -323,8 +325,8 @@ class RDTTransport:
             logging.debug("Closing UDP socket")
             try:
                 self.sock.close()
-            # except Exception as e:
-            #     logging.error(e)
+            except Exception as e:
+                logging.error(e)
             finally:
                 self.closed = True
 
@@ -642,7 +644,6 @@ class SACKTransport(RDTTransport):
     def send(
         self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
     ) -> int:
-        bytes_sent = 0
         segment = self._create_segment(data, op_metadata=op_metadata)
 
         # if the window is not full, send the packet

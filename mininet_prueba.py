@@ -23,17 +23,23 @@ def setup_topology(number_of_clients, packet_loss):
         net.addHost(f"h{i}", ip=f"10.0.0.{i}") for i in range(1, number_of_hosts + 1)
     ]
 
+    info(f"*** Adding links with {packet_loss}% loss\n")
     for i in range(0, number_of_hosts):
         net.addLink(hosts[i], s1, loss=packet_loss)
 
     info("*** Starting network\n")
     net.start()
 
+    info("\n*** Testing network connectivity\n")
+    net.pingAll()
+
+    input("\nPress Enter to continue...\n")
+
     port = 4000
 
     info("*** Starting server on h1\n")
     hosts[0].cmd(
-        f"venv/bin/python src/server -p {port} -s server_storage -H {hosts[0].IP()} > server.log 2>&1 &"
+        f"xterm -e 'venv/bin/python src/server -p {port} -s server_storage -H {hosts[0].IP()}' &"
     )
 
     time.sleep(1)
@@ -41,9 +47,16 @@ def setup_topology(number_of_clients, packet_loss):
     info("*** Starting clients in background\n")
 
     for i in range(1, number_of_hosts):
-        hosts[i].cmd(
-            f"venv/bin/python src/download -n medium.txt -d m{i}.txt -H {hosts[0].IP()} -p {port} > client{i}.log 2>&1 &"
-        )
+        if i % 2 == 0:
+            info(f"Starting client {i} with S&W\n")
+            hosts[i].cmd(
+                f"xterm -e 'venv/bin/python src/download -n medium.txt -d m{i}.txt -H {hosts[0].IP()} -p {port}; bash' &"
+            )
+        else:
+            info(f"Starting client {i} with SACK\n")
+            hosts[i].cmd(
+                f"xterm -e 'venv/bin/python src/download -n medium.txt -d m{i}.txt -H {hosts[0].IP()} -p {port} --sack; bash' &"
+            )
 
     CLI(net)
 
@@ -53,7 +66,7 @@ def setup_topology(number_of_clients, packet_loss):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mininet topology setup")
-    parser.add_argument("--num-clients", type=int, default=3, help="Number of clients")
+    parser.add_argument("--num-clients", type=int, default=4, help="Number of clients")
     parser.add_argument(
         "--packet-loss", type=int, default=10, help="Packet loss percentage"
     )

@@ -218,27 +218,28 @@ class FileTransferServer(Server):
             while True:
                 try:
                     pkt, addr = self.transport.read(self.chunk_size)
-                    if addr.as_tuple() not in self.client_threads:
-                        logging.debug(f"Adding client handler... => {self.clients}")
-                        client = ClientOperationHandler(
-                            transport_factory=self.transport_factory,
-                            client_addr=addr,
-                            storage_path=self.storage_path,
-                        )
-                        self.client_threads[addr.as_tuple()] = client
-                        client.start()
-                    else:
-                        self.client_threads[addr.as_tuple()]._enqueue(pkt)
-                    for client_addr in list(self.client_threads.keys()):
-                        client = self.client_threads[client_addr]
-                        if client.finished:
-                            logging.debug(f"Popping client: {client_addr}")
-                            try:
-                                self.finished_threads.append(
-                                    self.clients.pop(client_addr)
-                                )
-                            except KeyError:
-                                pass
+                    with self.clients_lock:
+                        if addr.as_tuple() not in self.client_threads:
+                            logging.debug(f"Adding client handler... => {self.clients}")
+                            client = ClientOperationHandler(
+                                transport_factory=self.transport_factory,
+                                client_addr=addr,
+                                storage_path=self.storage_path,
+                            )
+                            self.client_threads[addr.as_tuple()] = client
+                            client.start()
+                        else:
+                            self.client_threads[addr.as_tuple()]._enqueue(pkt)
+                        for client_addr in list(self.client_threads.keys()):
+                            client = self.client_threads[client_addr]
+                            if client.finished:
+                                logging.debug(f"Popping client: {client_addr}")
+                                try:
+                                    self.finished_threads.append(
+                                        self.client_threads.pop(client_addr)
+                                    )
+                                except KeyError:
+                                    pass
                 except (TimeoutError, BlockingIOError):
                     continue
                 except ConnectionError:
@@ -253,9 +254,10 @@ class FileTransferServer(Server):
 
     def close(self):
         logging.info("Server shutting down")
-        for client in self.finished_threads:
-            client.join()
-        for _, client in self.client_threads.items():
-            client.close()
-            client.join()
+        with self.clients_lock:
+            for client in self.finished_threads:
+                client.join()
+            for _, client in self.client_threads.items():
+                client.close()
+                client.join()
         super().close()
