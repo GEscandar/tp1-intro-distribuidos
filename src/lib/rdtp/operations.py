@@ -34,6 +34,8 @@ class DownloadOperation:
 
     def handle(self, addr: sockaddr):
         logging.info(f"Starting download for file {self.filename}")
+        # get the actual address we need to talk to
+        addr = self.transport.handshake(addr)
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
         resp, _ = self.transport.receive()
@@ -94,6 +96,8 @@ class UploadOperation:
         logging.info(
             f"Starting upload for file {self.filepath.name} to server at {addr}"
         )
+        # get the actual address we need to talk to
+        addr = self.transport.handshake(addr)
         # tell the server what we're going to do
         self.transport.send(self.get_op_metadata(), addr, op_metadata=True)
         # upload the file in chunks of size RECV_CHUNK_SIZE if

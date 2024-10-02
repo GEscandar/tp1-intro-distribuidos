@@ -244,6 +244,19 @@ class RDTTransport:
     ) -> int:
         raise NotImplementedError
 
+    def handshake(self, address: sockaddr):
+        logging.debug(f"Sending handshake message to: {address}")
+        for i in range(MAX_RETRIES):
+            try:
+                self._send(self._create_segment(), address)
+                _, new_addr = self.read(0)
+                break
+            except (TimeoutError, BlockingIOError):
+                if i == MAX_RETRIES:
+                    raise ConnectionError("Unable to connect")
+        logging.debug(f"Finished handshake, now talking to: {new_addr}")
+        return new_addr
+
     def _ack(self, pkt: RDTSegment, addr: sockaddr):
         """Send an acknowledgement for the received packet
 
@@ -542,7 +555,7 @@ class SACKTransport(RDTTransport):
 
         # send ack
         sent = 0
-        if pkt.data:
+        if pkt.data or self.ack == 0:
             logging.debug("Sending ack")
             sent = self._send(self._create_segment(), addr)
 
@@ -641,7 +654,10 @@ class SACKTransport(RDTTransport):
         try:
             ack_segment, _ = self.read(0)
             logging.debug(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
-            self.refill_window(ack_segment)
+            if ack_segment.ack == self.window[-1].pkt.expected_ack:
+                self.window.pop()
+            else:
+                self.refill_window(ack_segment)
         except TimeoutError:
             pass
 
