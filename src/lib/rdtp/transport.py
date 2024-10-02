@@ -143,10 +143,6 @@ class RDTSegment:
             )
         )
 
-    @staticmethod
-    def increment(seq):
-        return (seq + 1) % (1 << 8 * RDTSegment.SEQ_SIZE)
-
 
 class RDTTransport:
     """Base class for RDTP transport implementations"""
@@ -197,12 +193,6 @@ class RDTTransport:
             op_metadata=op_metadata,
             sack_options=sack_options,
         )
-
-    def send_all(self, data: bytes, amount: int, address: sockaddr):
-        bytes_sent = 0
-        while bytes_sent < amount:
-            bytes_sent += self.sock.sendto(data[bytes_sent:], address)
-        return bytes_sent
 
     def _send(self, segment: RDTSegment, address: sockaddr) -> int:
         """Try to send the RDT segment to the server at ```address```.
@@ -281,7 +271,7 @@ class RDTTransport:
         logging.debug(
             f"got package with seq={pkt.seq}, length={pkt_len}. sending ACK to {addr}. pkt=[{ack_pkt}]"
         )
-        if pkt_len:
+        if pkt_len or self.ack == 0:
             self._send(ack_pkt, addr)
 
     def read(self, bufsize: int):
@@ -427,6 +417,7 @@ class SACKTransport(RDTTransport):
 
         Args:
             pkt (RDTSegment): The received packet
+            addr (sockaddr): Sender address
         """
         import copy
 

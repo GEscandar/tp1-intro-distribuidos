@@ -47,7 +47,7 @@ class DownloadOperation:
                 pkt, _ = self.transport.receive()
                 logging.debug(f"Writing packet {pkt} to file")
                 bytes_written += f.write(pkt.data)
-        logging.info(f"Finished downloading file {self.filename} from server at {addr}")
+        logging.info(f"Finished downloading file {self.filename}")
 
 
 class UploadOperation:
@@ -93,9 +93,7 @@ class UploadOperation:
         return data
 
     def handle(self, addr: sockaddr):
-        logging.info(
-            f"Starting upload for file {self.filepath.name} to server at {addr}"
-        )
+        logging.info(f"Starting upload for file {self.filepath.name}")
         # get the actual address we need to talk to
         addr = self.transport.handshake(addr)
         # tell the server what we're going to do
@@ -109,9 +107,7 @@ class UploadOperation:
                 content = file.read(chunk_size)
                 self.transport.send(content, addr)
                 bytes_read += len(content)
-        logging.info(
-            f"Finished uploading file {self.filepath.name} to server at {addr}"
-        )
+        logging.info(f"Finished uploading file {self.filepath.name}")
 
 
 operations = {
