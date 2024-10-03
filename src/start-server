@@ -38,9 +38,7 @@ def main(
     logging.info(f"Starting server at port {port}")
     transport_factory = get_transport_factory(sack)
     addr = ("", port)
-    server = FileTransferServer(
-        *addr, storage, transport_factory=transport_factory
-    )
+    server = FileTransferServer(*addr, storage, transport_factory=transport_factory)
     server.start()
 
 
