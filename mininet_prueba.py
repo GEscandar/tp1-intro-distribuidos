@@ -20,7 +20,8 @@ def setup_topology(number_of_clients, packet_loss, operation):
 
     number_of_hosts = number_of_clients + 1
     hosts = [
-        net.addHost(f"h{i}", ip=f"10.0.0.{i}") for i in range(1, number_of_hosts + 1)
+        net.addHost(f"h{i}", ip=f"10.0.0.{i}")
+        for i in range(1, number_of_hosts + 1)
     ]
 
     info(f"*** Adding links with {packet_loss}% loss in server\n")
@@ -40,7 +41,7 @@ def setup_topology(number_of_clients, packet_loss, operation):
 
     info("*** Starting server on h1\n")
     hosts[0].cmd(
-        f"xterm -e 'venv/bin/python src/server -p {port} -s server_storage -H {hosts[0].IP()}' &"
+        f"xterm -e 'venv/bin/python src/start-server -p {port} -s server_storage -H {hosts[0].IP()}' &"
     )
 
     time.sleep(1)
@@ -82,11 +83,15 @@ def setup_topology(number_of_clients, packet_loss, operation):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mininet topology setup")
-    parser.add_argument("--num-clients", type=int, default=4, help="Number of clients")
+    parser.add_argument(
+        "--num-clients", type=int, default=4, help="Number of clients"
+    )
     parser.add_argument(
         "--packet-loss", type=int, default=10, help="Packet loss percentage"
     )
-    parser.add_argument("--operation", type=str, default="download", help="Operation")
+    parser.add_argument(
+        "--operation", type=str, default="download", help="Operation"
+    )
 
     args = parser.parse_args()
 
