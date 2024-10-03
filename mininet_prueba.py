@@ -9,7 +9,7 @@ from mininet.net import Mininet
 from mininet.node import OVSController
 
 
-def setup_topology(number_of_clients, packet_loss):
+def setup_topology(number_of_clients, packet_loss, operation):
     net = Mininet(controller=OVSController, link=TCLink)
 
     info("*** Adding controller\n")
@@ -47,17 +47,32 @@ def setup_topology(number_of_clients, packet_loss):
 
     info("*** Starting clients in background\n")
 
-    for i in range(1, number_of_hosts):
-        if i % 2 == 0:
-            info(f"Starting client {i} with S&W\n")
-            hosts[i].cmd(
-                f"xterm -e 'venv/bin/python src/download -n medium.txt -d m{i}.txt -H {hosts[0].IP()} -p {port}; bash' &"
-            )
-        else:
-            info(f"Starting client {i} with SACK\n")
-            hosts[i].cmd(
-                f"xterm -e 'venv/bin/python src/download -n medium.txt -d m{i}.txt -H {hosts[0].IP()} -p {port} --sack; bash' &"
-            )
+    if operation == "download":
+        for i in range(1, number_of_hosts):
+            if i % 2 == 0:
+                info(f"Starting client {i} with S&W\n")
+                hosts[i].cmd(
+                    f"xterm -e 'venv/bin/python src/download -n medium.txt -d m{i}.txt -H {hosts[0].IP()} -p {port}; bash' &"
+                )
+            else:
+                info(f"Starting client {i} with SACK\n")
+                hosts[i].cmd(
+                    f"xterm -e 'venv/bin/python src/download -n medium.txt -d m{i}.txt -H {hosts[0].IP()} -p {port} --sack; bash' &"
+                )
+    elif operation == "upload":
+        for i in range(1, number_of_hosts):
+            if i % 2 == 0:
+                info(f"Starting client {i} with S&W\n")
+                hosts[i].cmd(
+                    f"xterm -e 'venv/bin/python src/upload -n medium{i}.txt -s medium.txt -H {hosts[0].IP()} -p {port}; bash' &"
+                )
+            else:
+                info(f"Starting client {i} with SACK\n")
+                hosts[i].cmd(
+                    f"xterm -e 'venv/bin/python src/upload -n medium{i}.txt -s medium.txt -H {hosts[0].IP()} -p {port} --sack; bash' &"
+                )
+    else:
+        raise Exception("Invalid operation")
 
     CLI(net)
 
@@ -71,8 +86,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--packet-loss", type=int, default=10, help="Packet loss percentage"
     )
+    parser.add_argument("--operation", type=str, default="download", help="Operation")
 
     args = parser.parse_args()
 
     setLogLevel("info")
-    setup_topology(args.num_clients, args.packet_loss)
+    setup_topology(args.num_clients, args.packet_loss, args.operation)
