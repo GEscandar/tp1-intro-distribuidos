@@ -13,7 +13,11 @@ from lib.utils import common_options, init_logger
     "-d",
     "--dst",
     type=click.Path(
-        exists=False, file_okay=True, dir_okay=True, readable=True, path_type=str
+        exists=False,
+        file_okay=True,
+        dir_okay=True,
+        readable=True,
+        path_type=str,
     ),
     help="destination file path",
 )

@@ -68,7 +68,9 @@ class ClientOperationHandler(threading.Thread):
             self.handler = self.handle_download(file_size)
             logging.debug(f"Sending file size of {file_size} to client")
             # send file size to client without waiting too long for the ack
-            self.transport.send(file_size.to_bytes(4, sys.byteorder), self.client_addr)
+            self.transport.send(
+                file_size.to_bytes(4, sys.byteorder), self.client_addr
+            )
 
     def handle_upload(self):
         bytes_written = 0
@@ -169,14 +171,18 @@ class Server:
         # set both timeouts to 0 or as close to it as possible
         self.transport_factory = transport_factory
         self.transport = transport_factory(
-            sock=get_server_socket(self.address), sock_timeout=0, read_timeout=1
+            sock=get_server_socket(self.address),
+            sock_timeout=0,
+            read_timeout=1,
         )
 
     def on_receive(self, pkt: RDTSegment, addr: sockaddr):
         pass
 
     def add_client(self, addr: sockaddr):
-        self.clients[addr.as_tuple()] = self.transport_factory(sock=self.transport.sock)
+        self.clients[addr.as_tuple()] = self.transport_factory(
+            sock=self.transport.sock
+        )
 
     def start(self):
         logging.info("Ready to receive connections")
@@ -203,7 +209,11 @@ class Server:
 
 class FileTransferServer(Server):
     def __init__(
-        self, host: str, port: int, path: Path, transport_factory=StopAndWaitTransport
+        self,
+        host: str,
+        port: int,
+        path: Path,
+        transport_factory=StopAndWaitTransport,
     ):
         super().__init__(host, port, transport_factory)
         self.chunk_size = RECV_CHUNK_SIZE
@@ -220,7 +230,9 @@ class FileTransferServer(Server):
                     pkt, addr = self.transport.read(self.chunk_size)
                     with self.clients_lock:
                         if addr.as_tuple() not in self.client_threads:
-                            logging.debug(f"Adding client handler... => {self.clients}")
+                            logging.debug(
+                                f"Adding client handler... => {self.clients}"
+                            )
                             client = ClientOperationHandler(
                                 transport_factory=self.transport_factory,
                                 client_addr=addr,

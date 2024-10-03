@@ -85,16 +85,20 @@ class RDTSegment:
 
     @staticmethod
     def unpack(data: bytes):
-        seq = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
-        data = data[RDTSegment.SEQ_SIZE :]
+        seq = int.from_bytes(
+            data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder
+        )
+        data = data[RDTSegment.SEQ_SIZE:]
 
-        ack = int.from_bytes(data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder)
-        data = data[RDTSegment.SEQ_SIZE :]
+        ack = int.from_bytes(
+            data[: RDTSegment.SEQ_SIZE], byteorder=sys.byteorder
+        )
+        data = data[RDTSegment.SEQ_SIZE:]
         op_metadata = bool.from_bytes(data[:1], byteorder=sys.byteorder)
         data_offset = int.from_bytes(
-            data[1 : 1 + RDTSegment.DATA_OFFSET_SIZE], byteorder=sys.byteorder
+            data[1: 1 + RDTSegment.DATA_OFFSET_SIZE], byteorder=sys.byteorder
         )
-        data = data[1 + RDTSegment.DATA_OFFSET_SIZE :]
+        data = data[1 + RDTSegment.DATA_OFFSET_SIZE:]
 
         sack_options = None
         if data_offset > RDTSegment.DATA_OFFSET:
@@ -106,14 +110,15 @@ class RDTSegment:
                 sack_options.append(
                     sack_block(
                         left_edge=int.from_bytes(
-                            data[offset : offset + 4], byteorder=sys.byteorder
+                            data[offset: offset + 4], byteorder=sys.byteorder
                         ),
                         right_edge=int.from_bytes(
-                            data[offset + 4 : offset + 8], byteorder=sys.byteorder
+                            data[offset + 4: offset + 8],
+                            byteorder=sys.byteorder,
                         ),
                     )
                 )
-            data = data[length * 8 :]
+            data = data[length * 8:]
 
         return RDTSegment(
             data, seq, ack, op_metadata=op_metadata, sack_options=sack_options
@@ -138,10 +143,12 @@ class RDTSegment:
         return self.to_bytes()
 
     def __str__(self):
-        return (
-            "seq: {}, ack: {}, len(data): {}, op_metadata: {}, sack_options: {}".format(
-                self.seq, self.ack, len(self.data), self.op_metadata, self.sack_options
-            )
+        return "seq: {}, ack: {}, len(data): {}, op_metadata: {}, sack_options: {}".format(
+            self.seq,
+            self.ack,
+            len(self.data),
+            self.op_metadata,
+            self.sack_options,
         )
 
 
@@ -231,7 +238,11 @@ class RDTTransport:
         return bytes_sent
 
     def send(
-        self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
+        self,
+        data: bytes,
+        address: sockaddr,
+        op_metadata=False,
+        max_retries=MAX_RETRIES,
     ) -> int:
         raise NotImplementedError
 
@@ -287,17 +298,23 @@ class RDTTransport:
                 )
                 if ready[0]:
                     logging.debug(f"Reading fd {self._sockfd}: {ready}")
-                    data, addr = self.sock.recvfrom(bufsize + RDTSegment.HEADER_SIZE)
+                    data, addr = self.sock.recvfrom(
+                        bufsize + RDTSegment.HEADER_SIZE
+                    )
                     # logging.debug(data)
                 else:
                     raise TimeoutError("Socket read timed out")
             else:
                 # this raises BlockingIOError if data is not yet available to read
-                data, addr = self.sock.recvfrom(bufsize + RDTSegment.HEADER_SIZE)
+                data, addr = self.sock.recvfrom(
+                    bufsize + RDTSegment.HEADER_SIZE
+                )
             return RDTSegment.unpack(data), sockaddr(*addr)
         raise ConnectionError("Socket closed")
 
-    def receive(self, bufsize=RECV_CHUNK_SIZE, ack=True, max_retries=MAX_RETRIES):
+    def receive(
+        self, bufsize=RECV_CHUNK_SIZE, ack=True, max_retries=MAX_RETRIES
+    ):
         """
         Receive data through the socket, stripping the headers.
         Emits the corresponding ACK to the sending end.
@@ -306,14 +323,22 @@ class RDTTransport:
             try:
                 pkt, addr = self.read(bufsize)
                 if i <= 3 and self.read_timeout > MIN_READ_TIMEOUT:
-                    logging.debug(f"Took {i} attempts to read, halving read timeout")
+                    logging.debug(
+                        f"Took {i} attempts to read, halving read timeout"
+                    )
                     self.read_timeout /= 2
                 break
             except (TimeoutError, BlockingIOError):
                 if i == max_retries:
                     raise
-                elif i > 0 and i % 3 == 0 and self.read_timeout < MAX_READ_TIMEOUT:
-                    logging.debug(f"Took {i} attempts to read, doubling read timeout")
+                elif (
+                    i > 0
+                    and i % 3 == 0
+                    and self.read_timeout < MAX_READ_TIMEOUT
+                ):
+                    logging.debug(
+                        f"Took {i} attempts to read, doubling read timeout"
+                    )
                     self.read_timeout *= 2
                 continue
         if ack:
@@ -334,7 +359,11 @@ class RDTTransport:
 class StopAndWaitTransport(RDTTransport):
 
     def send(
-        self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
+        self,
+        data: bytes,
+        address: sockaddr,
+        op_metadata=False,
+        max_retries=MAX_RETRIES,
     ) -> int:
         segment = self._create_segment(data, op_metadata=op_metadata)
         for nattempt in range(max_retries + 1):
@@ -528,9 +557,14 @@ class SACKTransport(RDTTransport):
                 self.ack += len(pkt.data)
         self.sack_options = _opts
 
-        if len(self.sack_options) == 1 and self.sack_options[0].right_edge == self.ack:
+        if (
+            len(self.sack_options) == 1
+            and self.sack_options[0].right_edge == self.ack
+        ):
             # all packets acknowledged, reinitialize sack_options
-            logging.debug("All packets acknowledged, reinitializing sack_options")
+            logging.debug(
+                "All packets acknowledged, reinitializing sack_options"
+            )
             self.sack_options = []
 
         logging.debug(
@@ -579,7 +613,9 @@ class SACKTransport(RDTTransport):
             return slot.pkt, slot.addr
         return super().read(bufsize)
 
-    def receive(self, bufsize=RECV_CHUNK_SIZE, ack=True, max_retries=MAX_RETRIES):
+    def receive(
+        self, bufsize=RECV_CHUNK_SIZE, ack=True, max_retries=MAX_RETRIES
+    ):
         self._ensure_empty_window()
         pkt, addr = super().receive(bufsize, ack, max_retries)
         while pkt.seq > self.ack:
@@ -610,7 +646,9 @@ class SACKTransport(RDTTransport):
             if not acked and slot.pkt.expected_ack > ack_segment.ack:
                 _window.append(slot)
         self.window = _window
-        logging.debug(f"New window: {"\n".join(str(slot) for slot in self.window)}")
+        logging.debug(
+            f"New window: {"\n".join(str(slot) for slot in self.window)}"
+        )
 
     def resend_window(self, max_retries=MAX_RETRIES):
         logging.debug(f"Resending window")
@@ -642,7 +680,11 @@ class SACKTransport(RDTTransport):
                     self.read_timeout *= 2
 
     def send(
-        self, data: bytes, address: sockaddr, op_metadata=False, max_retries=MAX_RETRIES
+        self,
+        data: bytes,
+        address: sockaddr,
+        op_metadata=False,
+        max_retries=MAX_RETRIES,
     ) -> int:
         segment = self._create_segment(data, op_metadata=op_metadata)
 
@@ -668,7 +710,9 @@ class SACKTransport(RDTTransport):
         # the packet was sent, so wait for an ack without blocking
         try:
             ack_segment, _ = self.read(0)
-            logging.debug(f"Received ack: {ack_segment.ack}, expected ack={self.seq}")
+            logging.debug(
+                f"Received ack: {ack_segment.ack}, expected ack={self.seq}"
+            )
             if ack_segment.ack == self.window[-1].pkt.expected_ack:
                 self.window.pop()
             else:

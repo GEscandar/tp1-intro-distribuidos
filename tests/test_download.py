@@ -5,7 +5,11 @@ import os
 from pathlib import Path
 from src.lib.rdtp.transport import get_transport_factory
 from src.lib.rdtp.server import FileTransferServer
-from src.lib.rdtp.operations import DownloadOperation, run_operation, unpack_operation
+from src.lib.rdtp.operations import (
+    DownloadOperation,
+    run_operation,
+    unpack_operation,
+)
 
 
 def basic_server(server):

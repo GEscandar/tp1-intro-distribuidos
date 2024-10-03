@@ -118,8 +118,12 @@ def test_update_sack_options_3():
     transport._update_sack_options(RDTSegment("a" * 4096, 127004))
     assert transport.ack == 94236
     assert len(transport.sack_options) == 2
-    assert transport.sack_options[0] == sack_block(left_edge=139292, right_edge=143388)
-    assert transport.sack_options[1] == sack_block(left_edge=98332, right_edge=135196)
+    assert transport.sack_options[0] == sack_block(
+        left_edge=139292, right_edge=143388
+    )
+    assert transport.sack_options[1] == sack_block(
+        left_edge=98332, right_edge=135196
+    )
 
 
 def test_update_sack_options_4():
@@ -135,10 +139,18 @@ def test_update_sack_options_4():
     transport._update_sack_options(RDTSegment("a" * 4096, 368668))
     assert transport.ack == 94236
     assert len(transport.sack_options) == 4
-    assert transport.sack_options[0] == sack_block(left_edge=352284, right_edge=356380)
-    assert transport.sack_options[1] == sack_block(left_edge=360476, right_edge=376860)
-    assert transport.sack_options[2] == sack_block(left_edge=323612, right_edge=348188)
-    assert transport.sack_options[3] == sack_block(left_edge=217116, right_edge=319516)
+    assert transport.sack_options[0] == sack_block(
+        left_edge=352284, right_edge=356380
+    )
+    assert transport.sack_options[1] == sack_block(
+        left_edge=360476, right_edge=376860
+    )
+    assert transport.sack_options[2] == sack_block(
+        left_edge=323612, right_edge=348188
+    )
+    assert transport.sack_options[3] == sack_block(
+        left_edge=217116, right_edge=319516
+    )
 
 
 def test_update_sack_options_5():

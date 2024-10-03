@@ -13,7 +13,11 @@ from lib.utils import common_options, init_logger
     "-s",
     "--src",
     type=click.Path(
-        exists=True, file_okay=True, dir_okay=True, readable=True, path_type=str
+        exists=True,
+        file_okay=True,
+        dir_okay=True,
+        readable=True,
+        path_type=str,
     ),
     help="source file path",
 )

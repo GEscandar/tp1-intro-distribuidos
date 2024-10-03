@@ -2,7 +2,12 @@ import logging
 import sys
 from pathlib import Path
 from typing import Union
-from .transport import sockaddr, RDTTransport, StopAndWaitTransport, RECV_CHUNK_SIZE
+from .transport import (
+    sockaddr,
+    RDTTransport,
+    StopAndWaitTransport,
+    RECV_CHUNK_SIZE,
+)
 
 
 class DownloadOperation:
@@ -29,7 +34,7 @@ class DownloadOperation:
     @staticmethod
     def unpack(transport: RDTTransport, data: bytes):
         filename_size = int.from_bytes(data[:1], byteorder=sys.byteorder)
-        filename = data[1 : 1 + filename_size].decode()
+        filename = data[1: 1 + filename_size].decode()
         return DownloadOperation(transport, filename)
 
     def handle(self, addr: sockaddr):
@@ -69,10 +74,10 @@ class UploadOperation:
     def unpack(transport: RDTTransport, data: bytes):
         file_size = int.from_bytes(data[:4], byteorder=sys.byteorder)
         filename_size = int.from_bytes(data[4:5], byteorder=sys.byteorder)
-        filename = data[5 : 5 + filename_size].decode()
-        data = data[5 + filename_size :]
+        filename = data[5: 5 + filename_size].decode()
+        data = data[5 + filename_size:]
         dest_size = int.from_bytes(data[:2], byteorder=sys.byteorder)
-        dest = data[2 : 2 + dest_size].decode()
+        dest = data[2: 2 + dest_size].decode()
         return UploadOperation(transport, filename, dest, file_size)
 
     def get_op_metadata(self) -> bytes:

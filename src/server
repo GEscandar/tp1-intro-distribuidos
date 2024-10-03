@@ -15,7 +15,11 @@ from lib.utils import common_options, init_logger
     "-s",
     "--storage",
     type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, readable=True, path_type=str
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        path_type=str,
     ),
     help="folder path, used for files upload and download",
 )
@@ -34,7 +38,9 @@ def main(
     logging.info(f"Starting server at port {port}")
     transport_factory = get_transport_factory(sack)
     addr = ("", port)
-    server = FileTransferServer(*addr, storage, transport_factory=transport_factory)
+    server = FileTransferServer(
+        *addr, storage, transport_factory=transport_factory
+    )
     server.start()
 
 
